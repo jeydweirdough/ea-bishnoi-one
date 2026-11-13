@@ -1,0 +1,126 @@
+{
+  "title": "Choose the visual world for Executive Admin",
+  "question": "The roll assigned Receiving Stamp. Keep it, take an alternate, or re-roll.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Receiving Stamp",
+      "kicker": "THE ROLL",
+      "lineage": "Philippine office rubber stamps, stamp-pad ink and dry seals: RECEIVED, FOR APPROVAL, APPROVED, dated by hand",
+      "thesis": "Every status is a stamp mark the whole office already reads at a glance.",
+      "palette": ["#F4F5F2", "#1C1F24", "#4B2FA8", "#B3261E", "#1F5FA8"],
+      "materials": ["cool white bond paper", "stamp-pad violet, red and blue inks", "ruled form hairlines"],
+      "viewport": "A ruled form-sheet shell: a stamped app mark, a numbered nine-drawer sidebar, and each page's Coming Soon set as a dated receiving stamp.",
+      "risk": "Turns into costume if stamps are tilted or textured past legibility; marks must stay straight and crisp.",
+      "raised": [
+        {"from": "challenger-centre-rail", "raise": "One ruling grammar: every rule, border and divider is a one-pixel hairline drawn on the same form grid; no shadows or soft cards."},
+        {"from": "challenger-doujin-catalog", "raise": "Every module carries a form number (EA-04.2 Shell Fleet Cards), so navigation, breadcrumbs and search speak one code."},
+        {"from": "challenger-split-flap", "raise": "Registry columns are fixed and only their values change; status restyles a row without moving the grid."}
+      ]
+    },
+    {
+      "id": "model-pick",
+      "label": "Routing Slip",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "the stapled For Approval routing slip with a signature-and-date box per approver",
+      "thesis": "The app is the routing slip: every request shows its chain of boxes, signed or waiting.",
+      "palette": ["#FFFFFF", "#22262B", "#0F6E5C", "#C9CDD2"],
+      "materials": ["carbonless form paper", "boxed signature grid", "ballpoint blue initials"],
+      "viewport": "A sidebar of form sections and a content sheet headed by a horizontal row of approval boxes.",
+      "risk": "The familiar, safe office-form reading; close to what most admin tools in this category already look like."
+    },
+    {
+      "id": "challenger-terminal-yellow",
+      "label": "Terminal Wayfinding",
+      "verdict": "competitive",
+      "lineage": "international airport sign system, yellow overhead bands",
+      "thesis": "Nine groups as signed concourses; each page shows only the decisions ahead.",
+      "palette": ["#FFD200", "#111111", "#FFFFFF", "#3A3A3A"],
+      "materials": ["enamel sign panels", "humanist sans", "pictogram insets"],
+      "viewport": "A yellow sign band carries breadcrumbs and the next decision, with gate-style module numbers.",
+      "case": "Strong on clarity of navigation; loses on audience identification for a corporate back office.",
+      "risk": "Yellow at page scale is fatiguing for all-day operators."
+    },
+    {
+      "id": "challenger-centre-rail",
+      "label": "Centre-Rail Reference",
+      "verdict": "declined",
+      "lineage": "wide-margin scholarly editions",
+      "thesis": "Two dense columns around a keyed centre rail.",
+      "palette": ["#EDE7DA", "#141414", "#C4361C"],
+      "materials": ["ruling engine hairlines", "small roman"],
+      "viewport": "Twin text columns with a vermilion key rail.",
+      "case": "Fuses poorly: operators don't identify with scholarly apparatus.",
+      "risk": "Unreadable density on phones.",
+      "kept": "One-device-pixel ruling discipline across every rule.",
+      "hero": "https://impeccable.style/worlds/cards/rw-centre-rail-reference-setting-hero.webp"
+    },
+    {
+      "id": "challenger-doujin-catalog",
+      "label": "Convention Catalog",
+      "verdict": "declined",
+      "lineage": "doujin event circle catalogs",
+      "thesis": "Every item a coded cell in a numbered hall grid.",
+      "palette": ["#E9E6DF", "#111111", "#E4007F"],
+      "materials": ["newsprint", "single ink"],
+      "viewport": "A packed grid of coded cells keyed to a map.",
+      "case": "Fuses poorly: no imagery to fill cells in an admin app.",
+      "risk": "Visual noise at operating density.",
+      "kept": "Every module carries a code that navigation and search share.",
+      "hero": "https://impeccable.style/worlds/cards/pop-culture-shelf-doujin-event-catalog-hero.webp"
+    },
+    {
+      "id": "challenger-split-flap",
+      "label": "Split-Flap Board",
+      "verdict": "declined",
+      "lineage": "rail concourse departure boards",
+      "thesis": "Rows as live entities on a fixed board.",
+      "palette": ["#101010", "#F2F2F2", "#F2A900", "#C0392B"],
+      "materials": ["flap faces", "brushed steel"],
+      "viewport": "A black departures board of requests.",
+      "case": "Fuses partly: fits renewals, but the dark board fights a daytime office.",
+      "risk": "All-caps condensed type hurts long reading.",
+      "kept": "Fixed columns; only values change.",
+      "hero": "https://impeccable.style/worlds/cards/signals-instruments-split-flap-concourse-hero.webp"
+    },
+    {
+      "id": "challenger-labanotation",
+      "label": "Labanotation Score",
+      "verdict": "declined",
+      "lineage": "dance notation staff",
+      "thesis": "Length encodes exact duration.",
+      "palette": ["#FFFFFF", "#000000", "#BDBDBD"],
+      "materials": ["score paper", "shaded blocks"],
+      "viewport": "A vertical staff of shaded blocks.",
+      "case": "Fuses poorly: abstract notation hides status.",
+      "risk": "Needs a legend to read anything.",
+      "kept": "Exactness: dates and stages always shown exactly, never vaguely.",
+      "hero": "https://impeccable.style/worlds/cards/notation-diagram-systems-labanotation-hero.webp"
+    },
+    {
+      "id": "challenger-mono-marketing",
+      "label": "Monochrome Product",
+      "verdict": "declined",
+      "lineage": "neutral-scale software marketing",
+      "thesis": "Near-black on near-white, one accent.",
+      "palette": ["#FAFAFA", "#0A0A0A", "#5E5CE6"],
+      "materials": ["neutral scale", "hairline ghost buttons"],
+      "viewport": "Claim-and-proof sections.",
+      "case": "Fuses as a generic admin; nothing the audience recognizes as theirs.",
+      "risk": "Indistinguishable from any SaaS.",
+      "kept": "Accent rationed to a handful of uses per screen.",
+      "hero": "https://impeccable.style/worlds/cards/digital-design-canon-monochrome-product-marketing-hero.webp"
+    }
+  ],
+  "reroll": {"registers": ["safer", "bolder"]},
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "A clean neutral SaaS admin shell, Linear/Vercel style, executed impeccably.",
+    "palette": ["#FFFFFF", "#0F172A", "#2563EB"],
+    "materials": ["neutral sidebar", "soft cards", "system sans"],
+    "viewport": "Collapsible grey sidebar, top bar with search, centered empty state.",
+    "risk": "Indistinguishable from every other admin panel by design."
+  },
+  "steer": true
+}

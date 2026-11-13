@@ -1,0 +1,30 @@
+# Keep the repository small: bishnoi-one-server downloads from GitHub slowly.
+
+# secrets
+.env
+.env.*
+!.env.production.example
+
+# web
+web/node_modules/
+web/.next/
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+
+# api
+api/.venv/
+api/uploads/
+api/*.db
+api/*.db-shm
+api/*.db-wal
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# review screenshots (16 MB) stay local
+.impeccable/review/
+
+# editors / OS
+.claude/settings.local.json
+.DS_Store
+Thumbs.db

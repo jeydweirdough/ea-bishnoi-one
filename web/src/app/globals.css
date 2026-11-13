@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+/*
+ * Executive Admin — Monochrome Product world.
+ * One neutral scale; the accent is rationed to "you are here" and "live" signals.
+ * The accent is never used as text color or as a fill behind text.
+ */
+@theme {
+  --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  /* Poppins runs heavy: "bold" in this system is SemiBold */
+  --font-weight-bold: 600;
+
+  --color-canvas: #fafafa; /* content ground */
+  --color-rail: #f2f2f2; /* second neutral layer: sidebar, top bar, tab bar */
+  --color-sheet: #ffffff; /* raised sheets */
+  --color-hover: #ebebea;
+  --color-line: #e6e6e6; /* hairlines */
+  --color-edge: #cfcfcf; /* control borders */
+  --color-mute: #a6a6a6;
+  --color-ink-3: #6b6b6b; /* tertiary text, ≥4.5:1 on canvas */
+  --color-ink-2: #474747; /* secondary text */
+  --color-ink: #111111;
+  --color-accent: #a6c23f;
+  --color-accent-soft: #eef3d9;
+  /* The one semantic hue: overdue, rejected, destructive. Text and icons only, never large fills. */
+  --color-danger: #b42318;
+  --color-danger-soft: #fdf0ee;
+
+  --radius-ctl: 8px;
+  --radius-panel: 10px;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-float: 0 12px 32px -8px rgb(17 17 17 / 0.18), 0 2px 6px rgb(17 17 17 / 0.06);
+}
+
+:root {
+  color-scheme: light;
+  --topbar-h: 56px;
+  --tabbar-h: 64px;
+}
+
+@layer base {
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-ink);
+  color: #fff;
+}
+
+/* Browser surfaces carry the design too */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-edge);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+input,
+textarea {
+  caret-color: var(--color-ink);
+}
+
+a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px rgb(166 194 63 / 0.45);
+  border-radius: 6px;
+}
+
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hidden-scroll helper for horizontal rails */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+.rise-in {
+  animation: rise-in 200ms var(--ease-out-expo) both;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}

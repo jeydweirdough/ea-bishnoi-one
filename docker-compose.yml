@@ -1,0 +1,66 @@
+# Executive Admin — production stack for Coolify on bishnoi-one-server (https://ea.bishnoi.ai).
+#
+#   web  Next.js, the only public service (Coolify proxy → port 3000). Proxies /api/* to "api".
+#   api  FastAPI, private network only. Uploads (documents, item photos) on the "uploads" volume.
+#   db   Postgres 17, private network only. Data on the "pgdata" volume.
+#
+# No host ports are published: Coolify's proxy reaches "web" over its network, and port 8000 on
+# the host is the Coolify dashboard. Every ${VAR} below is set in Coolify → Environment Variables
+# (see .env.production.example for what each one means).
+services:
+  web:
+    build:
+      context: ./web
+      args:
+        API_URL: http://api:8000
+    restart: unless-stopped
+    expose:
+      - "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./api
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ea}:${SERVICE_PASSWORD_POSTGRES:?set SERVICE_PASSWORD_POSTGRES}@db:5432/${POSTGRES_DB:-executive_admin}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://ea.bishnoi.ai}
+      CORS_ORIGINS: '["${PUBLIC_ORIGIN:-https://ea.bishnoi.ai}"]'
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Executive Admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      SESSION_IDLE_HOURS: ${SESSION_IDLE_HOURS:-12}
+      SESSION_MAX_DAYS: ${SESSION_MAX_DAYS:-14}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
+      ESCALATION_INTERVAL_S: ${ESCALATION_INTERVAL_S:-300}
+      TZ: Asia/Manila
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ea}
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES:?set SERVICE_PASSWORD_POSTGRES}
+      POSTGRES_DB: ${POSTGRES_DB:-executive_admin}
+      TZ: Asia/Manila
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  uploads:
