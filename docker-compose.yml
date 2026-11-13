@@ -2,7 +2,10 @@
 #
 #   web  Next.js, the only public service (Coolify proxy → port 3000). Proxies /api/* to "api".
 #   api  FastAPI, private network only. Uploads (documents, item photos) on the "uploads" volume.
-#   db   Postgres 17, private network only. Data on the "pgdata" volume.
+#
+# The database is a separate Coolify resource (Postgres 17, "ea-bishnoi-one-database") so Coolify's
+# scheduled backups cover it. DATABASE_URL is its "Postgres URL (internal)"; this resource needs
+# "Connect To Predefined Network" turned on to reach it.
 #
 # No host ports are published: Coolify's proxy reaches "web" over its network, and port 8000 on
 # the host is the Coolify dashboard. Every ${VAR} below is set in Coolify → Environment Variables
@@ -28,7 +31,7 @@ services:
       - "8000"
     environment:
       ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-ea}:${SERVICE_PASSWORD_POSTGRES:?set SERVICE_PASSWORD_POSTGRES}@db:5432/${POSTGRES_DB:-executive_admin}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL to the database's Postgres URL (internal)}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://ea.bishnoi.ai}
       CORS_ORIGINS: '["${PUBLIC_ORIGIN:-https://ea.bishnoi.ai}"]'
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
@@ -41,26 +44,6 @@ services:
       TZ: Asia/Manila
     volumes:
       - uploads:/data/uploads
-    depends_on:
-      db:
-        condition: service_healthy
-
-  db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ea}
-      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES:?set SERVICE_PASSWORD_POSTGRES}
-      POSTGRES_DB: ${POSTGRES_DB:-executive_admin}
-      TZ: Asia/Manila
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
 volumes:
-  pgdata:
   uploads:

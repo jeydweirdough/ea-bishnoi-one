@@ -10,28 +10,31 @@ The tunnel already sends `*.bishnoi.ai` to the Coolify proxy on `localhost:80`, 
 |---|---|---|---|
 | `web` | `web/Dockerfile` (Next.js standalone, Node 22) | Coolify proxy → port 3000 (`ea.bishnoi.ai`) | none |
 | `api` | `api/Dockerfile` (FastAPI, Python 3.14, local OCR) | private network only (`http://api:8000`) | volume `uploads` (documents, item photos) |
-| `db` | `postgres:17-alpine` | private network only | volume `pgdata` |
+| database | separate Coolify resource `ea-bishnoi-one-database` (`postgres:17-alpine`) | Coolify's private network only | its own volume, Coolify scheduled backups |
 
 - The browser only talks to `web`. `web` forwards `/api/*` to `api`, so cookies stay first-party and no CORS is needed.
 - No host ports are published. Host port 8000 is the Coolify dashboard.
 
 ## One-time setup in Coolify
 
-1. **Get the code to GitHub.** Coolify deploys from a Git repository.
-   - The repo is kept small: `.gitignore` excludes `node_modules`, builds, local databases, uploads and the 16 MB of review screenshots. This matters because the server downloads from GitHub slowly.
-2. **Create the resource.** In Coolify: Project → **+ New → Docker Compose** (build pack "Docker Compose"). Pick the repository and branch. Compose file: `/docker-compose.yml`.
-3. **Set the domain.** On the `web` service, set the domain to **`http://ea.bishnoi.ai`**.
-   - Use `http`, not `https`: Cloudflare terminates HTTPS and the tunnel reaches the proxy over plain HTTP. Users still see `https://`.
-   - The port is 3000. Leave `api` and `db` without domains.
-4. **Set the environment variables** from `.env.production.example`:
-   - `SERVICE_PASSWORD_POSTGRES`: Coolify can generate it. Otherwise use 32+ letters and digits.
+1. **Code:** GitHub `jeydweirdough/ea-bishnoi-one`, branch `main`. `.gitignore` keeps the repo small (the server downloads from GitHub slowly).
+2. **Database (separate resource):** `ea-bishnoi-one-database`, image `postgres:17-alpine`.
+   - Keep the generated username and password. Do **not** make it publicly available.
+   - Press **Start** and wait for *Running (healthy)*.
+   - Copy **Postgres URL (internal)** from its Access / Connection section.
+   - **Backups**: add a daily scheduled backup.
+3. **App:** Project → **+ New** → the GitHub App source → the repository, branch `main` → build pack **Docker Compose**, file `/docker-compose.yml`.
+   - Turn on **Connect To Predefined Network**, so the API can reach the database.
+   - On the `web` service, set the domain to **`http://ea.bishnoi.ai:3000`**. Use `http`: Cloudflare handles HTTPS and users still see `https://`. `:3000` is the container port. Leave `api` without a domain.
+4. **Environment variables** on the app (see `.env.production.example`):
+   - `DATABASE_URL`: the internal URL from step 2.
    - `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_PASSWORD`: the first Admin.
-   - Leave the defaults unless there's a reason to change them. `PUBLIC_ORIGIN` must stay `https://ea.bishnoi.ai`.
-5. **Deploy.** The first build takes several minutes: the API image installs the OCR engine and loads its models during the build. On first start the API:
+   - Leave the rest at their defaults. `PUBLIC_ORIGIN` must stay `https://ea.bishnoi.ai`.
+5. **Deploy.** The first build takes several minutes: the API image installs the OCR engine. On first start the API:
    1. creates the tables;
    2. creates the starting data: companies GPI and 2MG, departments, the two approval routes, deadlines (SLA) and travel requirements;
    3. creates the first Admin.
-6. **Backups.** In Coolify, enable **scheduled backups** for the Postgres data (daily). Also back up the `uploads` volume: documents and photos live there, not in the database.
+6. **Back up the `uploads` volume** too. Documents and photos live there, not in the database.
 
 ## First sign-in
 
