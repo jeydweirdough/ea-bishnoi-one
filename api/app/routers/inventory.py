@@ -93,10 +93,11 @@ class ItemIn(BaseModel):
     status: Literal["active", "discontinued"] = "active"
     remarks: str | None = Field(None, max_length=4000)
 
-    @field_validator("item_code")
+    @field_validator("item_code", mode="before")
     @classmethod
     def code(cls, v):
-        return v.strip().upper()
+        # The form sends null for an empty field: that means "number it automatically".
+        return (v or "").strip().upper() if isinstance(v, str) or v is None else v
 
     @field_validator("location")
     @classmethod
