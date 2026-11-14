@@ -446,3 +446,42 @@ class AuditEvent(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
 
     actor: Mapped[Employee | None] = relationship(lazy="joined")
+
+
+class WebRequest(Base):
+    """A request sent through the shared request link (/request) by someone who isn't signed in.
+
+    It waits here until Admin or an Assistant checks who sent it and accepts it (which files the
+    real request or requests for that person and starts the usual approval route) or declines it.
+    Only what the form asks for is kept. Photos are stored re-encoded, without metadata.
+    """
+
+    __tablename__ = "web_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reference: Mapped[str] = mapped_column(String(32), unique=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str] = mapped_column(String(254), index=True)
+    phone: Mapped[str | None] = mapped_column(String(40))
+    position: Mapped[str | None] = mapped_column(String(120))
+    # The problem report part (optional).
+    problem: Mapped[dict | None] = mapped_column(JSON)
+    # The items part (optional): {"items": [...], "purpose": str, "needed_by": "YYYY-MM-DD"}.
+    supplies: Mapped[dict | None] = mapped_column(JSON)
+    urgent: Mapped[bool] = mapped_column(Boolean, default=False)
+    # [{"key": storage key, "size": bytes}] re-encoded JPEGs; moved onto the request when accepted.
+    photos: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="new", index=True)  # new | accepted | declined
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    request_ids: Mapped[list] = mapped_column(JSON, default=list)
+    handled_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decline_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+    company: Mapped[Company] = relationship(lazy="joined")
+    department: Mapped[Department | None] = relationship(lazy="joined")
+    employee: Mapped[Employee | None] = relationship(foreign_keys=[employee_id], lazy="joined")
+    handled_by: Mapped[Employee | None] = relationship(foreign_keys=[handled_by_id], lazy="joined")

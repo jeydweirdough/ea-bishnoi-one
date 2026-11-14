@@ -7,6 +7,7 @@ export const LIVE_MODULES = new Set([
   "dashboard/pending-approvals",
   "dashboard/priority-concerns",
   "requests/all",
+  "requests/from-link",
   "requests/asset-requests",
   "requests/local-purchase",
   "requests/supplies",

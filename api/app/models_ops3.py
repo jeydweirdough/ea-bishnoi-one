@@ -66,7 +66,7 @@ class StockMovement(Base):
     reference: Mapped[str] = mapped_column(String(32), unique=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("inventory_items.id"), index=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
-    kind: Mapped[str] = mapped_column(String(16))  # stock_in | issue | transfer_out | transfer_in | return | adjustment | write_off | reserve | release
+    kind: Mapped[str] = mapped_column(String(16))  # stock_in | issue | use | transfer_out | transfer_in | return | adjustment | write_off | reserve | release
     quantity: Mapped[int] = mapped_column(Integer)  # signed change to on_hand (reserve/release change reserved)
     balance_after: Mapped[int] = mapped_column(Integer)
     request_id: Mapped[int | None] = mapped_column(ForeignKey("requests.id"))

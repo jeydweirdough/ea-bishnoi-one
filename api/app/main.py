@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import auth
 from .config import get_settings
 from .db import create_schema, get_engine, session_factory
-from .routers import admin, approvals, assets, attachments, compliance, contracts_banking, documents, fleet, health, inventory, io, photos, reports, requests, scan, session, tasks, travel
+from .routers import admin, approvals, assets, attachments, compliance, contracts_banking, documents, fleet, health, intake, inventory, io, photos, reports, requests, scan, session, tasks, travel
 from .workflow import run_escalations
 
 log = logging.getLogger("executive_admin")
@@ -46,6 +46,10 @@ async def lifespan(app: FastAPI):
             if created:
                 log.warning("first Admin created for %s; they must change the password on first sign-in", created)
         await seed_reference_data(s)
+        from .asset_ids import backfill_serials
+
+        if n := await backfill_serials(s):
+            log.info("gave %d existing assets an automatic serial number", n)
     if settings.escalation_interval_s > 0:
         task = asyncio.create_task(_escalation_loop(settings.escalation_interval_s))
         # Load the OCR models in the background so the first document upload reads in seconds.
@@ -97,7 +101,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth.router)
-for r in (health, session, requests, attachments, approvals, tasks, admin, assets, inventory, fleet, compliance, travel, io, reports, documents, scan, photos):
+for r in (health, session, requests, attachments, approvals, tasks, admin, assets, inventory, fleet, compliance, travel, io, reports, documents, scan, photos, intake):
     app.include_router(r.router)
 app.include_router(contracts_banking.contracts)
 app.include_router(contracts_banking.banking)

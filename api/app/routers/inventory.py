@@ -19,6 +19,8 @@ from ..serialize import iso, person
 from .photos import photo_url
 from ..workflow import event as request_event, is_operator
 
+from ..asset_ids import ensure_serial
+
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
 
@@ -74,7 +76,8 @@ async def options(principal: Staff, session: Session) -> dict:
 
 class ItemIn(BaseModel):
     company_id: int | None = None
-    item_code: str = Field(..., min_length=1, max_length=40)
+    # Empty: numbered automatically, e.g. GPI-CS-0007.
+    item_code: str = Field("", max_length=40)
     name: str = Field(..., min_length=1, max_length=300)
     category: str = "Equipment"
     brand: str | None = Field(None, max_length=120)
@@ -112,6 +115,28 @@ class ItemPatch(ItemIn):
     version: int
 
 
+ITEM_CODE_PREFIX = {"Equipment": "EQ", "Supplies": "SU", "Spare Parts": "SP", "Consumables": "CS"}
+
+
+async def next_item_code(session, company_id: int, category: str) -> str:
+    from ..models import Company, DocumentSequence
+
+    company = await session.get(Company, company_id)
+    code = (company.code if company else "EA").upper()
+    prefix = ITEM_CODE_PREFIX.get(category, "IT")
+    doc_type = f"IC-{code}-{prefix}"[:16]
+    seq = (await session.execute(select(DocumentSequence).where(DocumentSequence.doc_type == doc_type, DocumentSequence.year == 0).with_for_update())).scalar_one_or_none()
+    if seq is None:
+        seq = DocumentSequence(doc_type=doc_type, year=0, last_value=0)
+        session.add(seq)
+        await session.flush()
+    while True:
+        seq.last_value += 1
+        candidate = f"{code}-{prefix}-{seq.last_value:04d}"
+        if not (await session.execute(select(InventoryItem.id).where(InventoryItem.company_id == company_id, InventoryItem.item_code == candidate))).first():
+            return candidate
+
+
 @router.get("/items")
 async def list_items(
     principal: Staff, session: Session, q: str | None = Query(None, max_length=200), category: str | None = None, location: str | None = None,
@@ -145,6 +170,8 @@ async def create_item(body: ItemIn, principal: Staff, session: Session) -> dict:
     if not can_adjust(principal):
         raise forbidden("Setting up inventory items needs Admin or delegated inventory control")
     cid = await company_for(session, principal, body.company_id)
+    if not body.item_code:
+        body.item_code = await next_item_code(session, cid, body.category)
     dup = await session.execute(select(InventoryItem.id).where(InventoryItem.company_id == cid, InventoryItem.item_code == body.item_code, InventoryItem.location == body.location))
     if dup.first():
         raise conflict(f"{body.item_code} already has a stock line at {body.location}")
@@ -184,6 +211,7 @@ async def update_item(item_id: int, body: ItemPatch, principal: Staff, session: 
         raise forbidden("Editing inventory items needs Admin or delegated inventory control")
     i = await scoped(session, InventoryItem, item_id, principal)
     check_version(i, body.version)
+    body.item_code = body.item_code or i.item_code  # cleared: keep the current code
     if body.item_code != i.item_code or body.location != i.location:
         dup = await session.execute(select(InventoryItem.id).where(InventoryItem.company_id == i.company_id, InventoryItem.item_code == body.item_code, InventoryItem.location == body.location, InventoryItem.id != i.id))
         if dup.first():
@@ -202,7 +230,8 @@ async def update_item(item_id: int, body: ItemPatch, principal: Staff, session: 
 
 
 class MoveIn(BaseModel):
-    kind: Literal["stock_in", "issue", "return", "transfer", "adjustment", "write_off"]
+    # "use": consumed in the office (pantry, cleaning, printing) rather than handed to one person.
+    kind: Literal["stock_in", "issue", "use", "return", "transfer", "adjustment", "write_off"]
     quantity: int = Field(..., ge=1, le=10_000_000)
     direction: Literal["add", "remove"] = "add"  # adjustments only
     issued_to_id: int | None = None
@@ -216,7 +245,7 @@ async def move_stock(item_id: int, body: MoveIn, principal: Staff, session: Sess
     if i.status == "discontinued" and body.kind in ("stock_in", "return"):
         raise conflict("This item is discontinued")
     reason = (body.reason or "").strip() or None
-    if body.kind in ("adjustment", "write_off") and not reason:
+    if body.kind in ("adjustment", "write_off", "use") and not reason:
         raise bad_request({"message": "A reason is required", "fields": {"reason": "Required"}})
     if body.kind == "adjustment" and not can_adjust(principal):
         raise forbidden("Adjustments need Admin or delegated inventory control")
@@ -230,6 +259,10 @@ async def move_stock(item_id: int, body: MoveIn, principal: Staff, session: Sess
         emp = await employee_in(session, body.issued_to_id, i.company_id, "issued_to_id")
         await move(session, principal, i, "issue", -body.quantity, reason=reason, issued_to_id=emp.id)
         await issue_assets(session, principal, i, body.quantity, emp.id, None)
+    elif body.kind == "use":
+        if body.quantity > i.available:
+            raise conflict(f"Only {i.available} {i.unit} available ({i.reserved} reserved)")
+        await move(session, principal, i, "use", -body.quantity, reason=reason)
     elif body.kind == "transfer":
         dest_loc = (body.to_location or "").strip()
         if not dest_loc or dest_loc == i.location:
@@ -266,6 +299,7 @@ async def issue_assets(session, principal: Principal, item: InventoryItem, qty: 
             brand=item.brand, model=item.model, quantity=1, unit=item.unit, condition=AssetCondition.brand_new, status=AssetStatus.assigned, holder_id=holder_id,
             issued_by_id=principal.id, date_issued=date.today(), purchase_reference=item.item_code, request_id=request.id if request else None,
         )
+        await ensure_serial(session, a)
         session.add(a)
         await session.flush()
         session.add(AssetEvent(asset_id=a.id, type="assigned", message=f"Issued from inventory {item.item_code} ({item.location})", actor_id=principal.id, to_holder_id=holder_id))
@@ -383,7 +417,7 @@ async def reorder(body: ReorderIn, principal: Staff, session: Session) -> dict:
     req = Request(
         reference=await next_reference(session, "REQ"), kind=RequestKind.local_purchase, company_id=items[0].company_id, department_id=principal.employee.department_id,
         requester_id=principal.id, status=S.draft, subject=f"Restock: {items[0].name}" + (f" + {len(items) - 1} more" if len(items) > 1 else ""),
-        purpose="Replenish inventory below reorder level", description="Drafted from Equipment Inventory reorder suggestions.",
+        purpose="Replenish inventory below reorder level", description="Drafted from Consumables & Stock reorder suggestions.",
     )
     for n, i in enumerate(items):
         qty = i.reorder_quantity or max(1, i.reorder_level * 2 - i.available)

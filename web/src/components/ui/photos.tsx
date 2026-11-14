@@ -256,7 +256,7 @@ function Viewer({ photos, index, onIndex, onClose, canEdit, onChanged }: { photo
 }
 
 /** Photos chosen while creating a record; they are uploaded once the record is saved. */
-export function PendingPhotos({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
+export function PendingPhotos({ files, onChange, max = MAX, note = "what the item looks like" }: { files: File[]; onChange: (f: File[]) => void; max?: number; note?: string }) {
   const [urls, setUrls] = useState<string[]>([]);
   useEffect(() => {
     const u = files.map((f) => URL.createObjectURL(f));
@@ -268,9 +268,9 @@ export function PendingPhotos({ files, onChange }: { files: File[]; onChange: (f
     <div className="mb-5 rounded-[var(--radius-ctl)] border border-line bg-canvas p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[13.5px] font-bold">
-          Photos <span className="font-normal text-ink-3">· what the item looks like</span>
+          Photos <span className="font-normal text-ink-3">· {note}</span>
         </p>
-        {files.length < MAX && <PhotoButtons compact onFiles={(f) => onChange([...files, ...f].slice(0, MAX))} />}
+        {files.length < max && <PhotoButtons compact onFiles={(f) => onChange([...files, ...f].slice(0, max))} />}
       </div>
       {files.length > 0 && (
         <ul className="no-scrollbar mt-3 flex gap-2 overflow-x-auto">

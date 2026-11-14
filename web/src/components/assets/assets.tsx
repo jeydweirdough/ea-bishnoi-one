@@ -125,20 +125,35 @@ export function AssetStatusBadge({ a }: { a: Pick<Asset, "status" | "awaiting_ac
 const ASSET_FIELDS: FieldDef[] = [
   { name: "name", label: "Asset name", required: true, placeholder: "e.g. Lenovo ThinkPad T14" },
   { name: "category", label: "Category", type: "select", options: CATEGORIES, required: true, half: true },
-  { name: "serial_number", label: "Serial number", half: true, hint: "Each serial is one record" },
+  { name: "serial_number", label: "Serial number", half: true, hint: "Leave empty to keep the current one" },
   { name: "brand", label: "Brand", half: true },
   { name: "model", label: "Model", half: true },
   { name: "condition", label: "Condition", type: "select", options: CONDITIONS, required: true, half: true },
   { name: "location", label: "Location", half: true, placeholder: "Floor, room or site" },
   { name: "department_id", label: "Department", type: "department", more: true, half: true },
-  { name: "quantity", label: "Quantity", type: "number", more: true, half: true, hint: "Only for non-serialized items" },
-  { name: "unit", label: "Unit", more: true, half: true },
   { name: "purchase_date", label: "Purchase date", type: "date", more: true, half: true },
   { name: "purchase_reference", label: "Purchase reference", more: true, half: true, placeholder: "PO / OR / DR number" },
   { name: "description", label: "Description", type: "textarea", more: true },
   { name: "purpose", label: "Purpose", type: "textarea", more: true },
   { name: "remarks", label: "Remarks", type: "textarea", more: true },
 ];
+
+/** Registering: say how many; each item becomes its own record with its own serial (typed, or numbered automatically). */
+const REGISTER_FIELDS: FieldDef[] = [
+  ASSET_FIELDS[0],
+  ASSET_FIELDS[1],
+  { name: "count", label: "How many?", type: "number", required: true, half: true, hint: "Each item gets its own record" },
+  ...ASSET_FIELDS.slice(3, 7),
+  { name: "serial_numbers", label: "Serial numbers", type: "textarea", placeholder: "One per line, in order", hint: "Optional. Items without one are numbered automatically, like GPI-IT-00012." },
+  ...ASSET_FIELDS.slice(7),
+];
+
+function serialList(v: unknown): string[] {
+  return String(v ?? "")
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 /* ---------------------------------------------------------------- shared rows */
 
@@ -268,15 +283,17 @@ export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) 
       <RecordDialog
         open={creating}
         onClose={() => setCreating(false)}
-        title="Register an asset"
-        description="Serialized equipment gets one record per serial number."
-        fields={ASSET_FIELDS}
-        initial={{ condition: "brand_new", quantity: "1", unit: "unit" }}
+        title="Register assets"
+        description="Equipment that is issued to people. For things counted out, like bond paper or toner, use Consumables & Stock."
+        fields={REGISTER_FIELDS}
+        initial={{ condition: "brand_new", count: "1" }}
         submitLabel="Register"
         photos="asset"
         onSubmit={async (p) => {
-          const a = await post<Asset>("/api/v1/assets", { ...p, quantity: p.quantity ?? 1, unit: p.unit ?? "unit" });
-          toast(`Registered · ${a.reference}`);
+          const { serial_numbers, ...rest } = p;
+          const a = await post<Asset & { created: { id: number; serial_number: string }[] }>("/api/v1/assets", { ...rest, count: p.count ?? 1, serial_numbers: serialList(serial_numbers) });
+          const n = a.created.length;
+          toast(n > 1 ? `Registered ${n} items · ${a.created[0].serial_number} to ${a.created[n - 1].serial_number}` : `Registered · SN ${a.serial_number}`);
           invalidate();
           return a;
         }}
@@ -759,7 +776,7 @@ export function AssetDetailView({ id }: { id: number }) {
                 ["Department", a.department?.name ?? "—"],
                 ["Location", a.location ?? "—"],
                 ["Brand / model", [a.brand, a.model].filter(Boolean).join(" ") || "—"],
-                ["Quantity", `${a.quantity} ${a.unit}`],
+                ["Quantity", a.quantity > 1 ? `${a.quantity} ${a.unit}` : "—"],
                 ["Purchased", a.purchase_date ? `${fmtDate(a.purchase_date)}${a.purchase_reference ? ` · ${a.purchase_reference}` : ""}` : "—"],
                 ["Company", a.company.name],
               ]
@@ -795,7 +812,7 @@ export function AssetDetailView({ id }: { id: number }) {
         initial={spec?.initial}
         submitLabel={spec?.label}
         onSubmit={async (p) => {
-          const body = dialog === "edit" ? { ...p, quantity: p.quantity ?? 1, unit: p.unit ?? "unit", version: a.version } : p;
+          const body = dialog === "edit" ? { ...p, version: a.version } : p;
           const res = await api<AssetDetail | Repair>(spec!.url, { method: spec!.method ?? "POST", json: body });
           if ("actions" in res) q.setData(res);
           else q.reload();

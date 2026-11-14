@@ -6,6 +6,7 @@ import {
   ArrowDownToLine,
   ArrowLeftRight,
   ArrowUpFromLine,
+  PackageMinus,
   Ban,
   Boxes,
   ChevronRight,
@@ -65,13 +66,13 @@ type Move = { id: number; reference: string; kind: string; quantity: number; bal
 type ItemDetail = Item & { movements: Move[]; reservations: { id: number; quantity: number; request: { id: number; reference: string; subject: string; requester: Person } }[]; other_locations: { id: number; location: string; on_hand: number; available: number }[]; can_adjust: boolean; can_write_off: boolean };
 type Options = { categories: string[]; locations: string[]; can_adjust: boolean; can_write_off: boolean };
 
-const KIND_LABEL: Record<string, string> = { stock_in: "Stock in", issue: "Issued", transfer_out: "Transferred out", transfer_in: "Transferred in", return: "Returned", adjustment: "Adjustment", write_off: "Written off", reserve: "Reserved", release: "Released" };
-const KIND_ICON: Record<string, LucideIcon> = { stock_in: ArrowDownToLine, issue: ArrowUpFromLine, transfer_out: ArrowLeftRight, transfer_in: ArrowLeftRight, return: Undo2, adjustment: SlidersHorizontal, write_off: Ban };
+const KIND_LABEL: Record<string, string> = { stock_in: "Stock in", issue: "Issued", use: "Used", transfer_out: "Transferred out", transfer_in: "Transferred in", return: "Returned", adjustment: "Adjustment", write_off: "Written off", reserve: "Reserved", release: "Released" };
+const KIND_ICON: Record<string, LucideIcon> = { stock_in: ArrowDownToLine, issue: ArrowUpFromLine, use: PackageMinus, transfer_out: ArrowLeftRight, transfer_in: ArrowLeftRight, return: Undo2, adjustment: SlidersHorizontal, write_off: Ban };
 
 function itemFields(o?: Options, editing = false): FieldDef[] {
   return [
     { name: "name", label: "Item", required: true, placeholder: "e.g. HP 85A toner" },
-    { name: "item_code", label: "Item code (SKU)", required: true, half: true, placeholder: "e.g. TNR-85A" },
+    { name: "item_code", label: "Item code", half: true, placeholder: "Automatic", hint: editing ? undefined : "Leave empty to number it automatically" },
     { name: "category", label: "Category", type: "select", options: o?.categories ?? ["Equipment", "Supplies", "Spare Parts", "Consumables"], required: true, half: true },
     { name: "location", label: "Storage location", required: true, half: true, placeholder: "e.g. HQ stockroom" },
     { name: "unit", label: "Unit", required: true, half: true },
@@ -103,7 +104,7 @@ export function InventoryPage() {
     <ModuleShell
       group="assets"
       item="inventory"
-      summary="Stock on hand for spare equipment and supplies, by storage location."
+      summary="Consumables, supplies and spare equipment counted by quantity. Every item in or out is recorded on its stock card."
       actions={
         <>
           {o.data?.can_adjust && (
@@ -136,10 +137,10 @@ export function InventoryPage() {
       <RecordDialog
         open={creating}
         onClose={() => setCreating(false)}
-        title="Add a stock item"
-        description="One line per item and storage location. The opening quantity is logged as stock in."
+        title="Add a consumable or stock item"
+        description="For things counted by quantity, like bond paper, toner or cleaning supplies. The opening quantity is recorded as the first movement."
         fields={itemFields(o.data)}
-        initial={{ category: "Supplies", unit: "pc", opening_quantity: "0", reorder_level: "0", serialized_on_issue: "false" }}
+        initial={{ category: "Consumables", unit: "pc", opening_quantity: "0", reorder_level: "0", serialized_on_issue: "false" }}
         submitLabel="Add item"
         photos="inventory_item"
         onSubmit={async (p) => {
@@ -533,7 +534,7 @@ function MoveRow({ m, showItem }: { m: Move; showItem?: boolean }) {
 
 /* ---------------------------------------------------------------- item page */
 
-type MoveKind = "stock_in" | "issue" | "transfer" | "return" | "adjustment" | "write_off";
+type MoveKind = "stock_in" | "issue" | "use" | "transfer" | "return" | "adjustment" | "write_off";
 
 export function StockItemView({ id }: { id: number }) {
   const toast = useToast();
@@ -546,6 +547,7 @@ export function StockItemView({ id }: { id: number }) {
   const moveSpec: Record<MoveKind, { title: string; fields: FieldDef[]; label: string }> = {
     stock_in: { title: "Receive stock", label: "Add to stock", fields: [{ name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Reference / note", half: true, placeholder: "DR or PO number" }] },
     issue: { title: "Issue stock", label: "Issue", fields: [{ name: "issued_to_id", label: "Issue to", type: "person", required: true, placeholder: "Choose a person" }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true, hint: `${i.available} available` }, { name: "reason", label: "Note", half: true }] },
+    use: { title: "Record use", label: "Record use", fields: [{ name: "quantity", label: "Quantity used", type: "number", required: true, half: true, hint: `${i.available} available` }, { name: "reason", label: "Used for", required: true, half: true, placeholder: "e.g. Pantry, printing, cleaning" }] },
     transfer: { title: "Transfer to another location", label: "Transfer", fields: [{ name: "to_location", label: "To location", required: true, half: true }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Note" }] },
     return: { title: "Return to stock", label: "Return", fields: [{ name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Returned by / note", half: true }] },
     adjustment: { title: "Adjust count", label: "Adjust", fields: [{ name: "direction", label: "Direction", type: "select", required: true, half: true, options: [{ value: "add", label: "Add" }, { value: "remove", label: "Remove" }] }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Reason", type: "textarea", required: true }] },
@@ -553,6 +555,7 @@ export function StockItemView({ id }: { id: number }) {
   };
   const actions: [MoveKind, LucideIcon, string, boolean][] = [
     ["issue", ArrowUpFromLine, "Issue", true],
+    ["use", PackageMinus, "Record use", true],
     ["stock_in", ArrowDownToLine, "Receive", true],
     ["transfer", ArrowLeftRight, "Transfer", true],
     ["return", Undo2, "Return", true],
@@ -563,7 +566,7 @@ export function StockItemView({ id }: { id: number }) {
   const spec = dialog && dialog !== "edit" ? moveSpec[dialog] : undefined;
   return (
     <PageFrame>
-      <Breadcrumbs crumbs={[{ label: "Equipment Inventory", href: "/assets/inventory" }, { label: i.item_code }]} />
+      <Breadcrumbs crumbs={[{ label: "Consumables & Stock", href: "/assets/inventory" }, { label: i.item_code }]} />
       <header className="flex items-start gap-4">
         <span className="hidden size-12 shrink-0 items-center justify-center rounded-[12px] border border-line bg-sheet sm:flex" aria-hidden="true">
           <Boxes className="size-6" strokeWidth={1.6} />

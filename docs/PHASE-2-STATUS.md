@@ -551,3 +551,26 @@ Sidebar: Assets, Fleet, Compliance and Travel now sit under a **Registers** head
   - The models have not yet been run against a real Neon instance.
 - **Attachment storage** is the local disk (`api/uploads/`). Production needs object storage.
 - **Not built yet:** email or push delivery of notifications; they are in-app only for now.
+
+## Improvements, 14 Nov 2026
+
+- **Automatic serial numbers.**
+  - Every asset has a serial number. If none is typed, the system issues `<COMPANY>-<CATEGORY>-<NNNNN>`, for example `GPI-IT-00012`. Numbers never repeat.
+  - Assets registered before this change got one on the next start.
+  - Clearing a serial on edit keeps the current one.
+- **Registering several of the same item** (fixes the quantity error).
+  - Register asset asks "How many?". Five chairs become five records, each with its own serial, so each one can be issued, returned and repaired on its own.
+  - Typed serials are used first, in order; the rest are numbered automatically.
+  - Receiving Proof and Excel import work the same way.
+- **Consumables & Stock** (formerly Equipment Inventory). This is where anything counted by quantity lives: bond paper, toner, coffee, cleaning supplies.
+  - Item codes are automatic when left empty, for example `GPI-CS-0007`.
+  - A new movement, **Record use**, covers consumables used in the office rather than handed to one person.
+  - Every movement (in, issue, use, return, transfer, adjust, write-off) is on the item's stock card with the balance after it.
+- **The request link: `/request`** (e.g. https://ea.bishnoi.ai/request). One link for everyone, to share in group chats.
+  - It covers reporting a problem, requesting items, or both in one go, with up to 4 photos (cleaned of location data) and an urgent flag.
+  - **Signed in:** their details are filled in, and the requests go straight into the usual approval route.
+  - **Not signed in:** the person types their name, work email, mobile, company, department and position.
+    - The submission waits in **Requests → From the Request Link**.
+    - EA confirms who sent it: matched automatically by email, picked from the directory, or added as a new person. EA then accepts it, which files the real request(s) under that person and starts approval, or declines it with a reason.
+    - The sender keeps a reference (`EA-WEB-2026-0001`) and can check its status with that reference and their email.
+  - **Protection:** a limited number of submissions and status checks per connection; a hidden field that bots fill in; only the form's own fields are kept; photos are re-encoded; nothing reaches approvers before EA has checked it.

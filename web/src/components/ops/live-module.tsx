@@ -12,8 +12,10 @@ import { CardsPage, CasesPage } from "@/components/banking/banking";
 import { ReportsHub } from "@/components/reports/reports";
 import { RenewalCalendar } from "@/components/compliance/compliance";
 import { FuelBillingPage, VehiclesPage } from "@/components/fleet/fleet";
+import { FromLinkPage } from "@/components/request-link/inbox";
 
 const PAGES: Record<string, () => React.ReactNode> = {
+  "requests/from-link": FromLinkPage,
   "assets/registry": () => <AssetRegistry />,
   "assets/assignment": () => <AssetRegistry view="assigned" />,
   "assets/repairs": () => <AssetRegistry view="under_repair" />,

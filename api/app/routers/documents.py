@@ -491,10 +491,10 @@ TEMPLATES: list[Template] = [
     Template("task_completion_report", "Task Completion Report", "Administration", "ADM", "task", b_task_completion),
     Template("monthly_administrative_report", "Monthly Administrative Report", "Administration", "ADM", "period", b_period("monthly")),
     Template("executive_summary_report", "Executive Summary Report", "Administration", "ADM", "period", b_period("executive")),
-    Template("stock_card", "Stock Card", "Equipment Inventory", "INV", "inventory_item", b_stock_card),
-    Template("inventory_count_sheet", "Inventory Count Sheet", "Equipment Inventory", "INV", "inventory_count", b_count_sheet),
-    Template("inventory_issuance_slip", "Inventory Issuance Slip", "Equipment Inventory", "INV", "stock_movement", b_movement("issuance"), need(lambda m: m.kind == "issue", "Only for issues")),
-    Template("stock_adjustment_form", "Stock Adjustment / Write-off Form", "Equipment Inventory", "INV", "stock_movement", b_movement("adjustment"), need(lambda m: m.kind in ("adjustment", "write_off"), "Only for adjustments and write-offs")),
+    Template("stock_card", "Stock Card", "Consumables & Stock", "INV", "inventory_item", b_stock_card),
+    Template("inventory_count_sheet", "Inventory Count Sheet", "Consumables & Stock", "INV", "inventory_count", b_count_sheet),
+    Template("inventory_issuance_slip", "Inventory Issuance Slip", "Consumables & Stock", "INV", "stock_movement", b_movement("issuance"), need(lambda m: m.kind == "issue", "Only for issues")),
+    Template("stock_adjustment_form", "Stock Adjustment / Write-off Form", "Consumables & Stock", "INV", "stock_movement", b_movement("adjustment"), need(lambda m: m.kind in ("adjustment", "write_off"), "Only for adjustments and write-offs")),
 ]
 BY_KEY = {t.key: t for t in TEMPLATES}
 

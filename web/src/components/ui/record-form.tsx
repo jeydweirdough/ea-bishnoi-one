@@ -240,7 +240,7 @@ export function RecordDialog({
     setErrors({});
     setMessage(undefined);
     try {
-      const saved = (await onSubmit(toPayload(fields, values))) as { id?: number } | undefined;
+      const saved = (await onSubmit(toPayload(fields, values))) as { id?: number; created?: { id: number }[] } | undefined;
       const ownerId = scan?.ownerId ?? saved?.id;
       if (file && scan?.attachTo && ownerId) {
         const fd = new FormData();
@@ -250,7 +250,9 @@ export function RecordDialog({
         await api("/api/v1/attachments", { method: "POST", body: fd }).catch((e: ApiError) => toast(`Saved, but the document was not attached: ${e.message}`, "error"));
       }
       if (photos && pending.length && saved?.id) {
-        for (const f of pending) await uploadPhoto(photos, saved.id, f).catch((e: ApiError) => toast(`Saved, but a photo was not added: ${e.message}`, "error"));
+        // Several identical items registered at once share the photos (up to 20 records).
+        const owners = saved.created?.length ? saved.created.slice(0, 20).map((c) => c.id) : [saved.id];
+        for (const id of owners) for (const f of pending) await uploadPhoto(photos, id, f).catch((e: ApiError) => toast(`Saved, but a photo was not added: ${e.message}`, "error"));
         invalidate();
       }
       onClose();

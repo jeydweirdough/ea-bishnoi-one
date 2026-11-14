@@ -254,9 +254,20 @@ async def _asset_create(session, principal, v: dict):
     cid, p = await _asset_payload(session, principal, v)
     if p["serial_number"] and (await session.execute(select(Asset.id).where(Asset.serial_number == p["serial_number"]))).first():
         raise RowError("serial_number", f"Serial {p['serial_number']} is already registered", suggestion="Use Update mode to change the existing asset")
-    a = Asset(reference=await next_reference(session, "AST"), **p)
-    session.add(a)
-    return a
+    from .asset_ids import ensure_serial
+
+    # Every row is one item: a quantity above 1 becomes that many records, each with its own serial number.
+    n = max(1, min(int(p.pop("quantity") or 1), 200))
+    if n > 1 and p["serial_number"]:
+        raise RowError("quantity", "A row with a serial number is one item", suggestion="Use one row per serial, or leave the serial empty to number them automatically")
+    first = None
+    for _ in range(n):
+        a = Asset(reference=await next_reference(session, "AST"), quantity=1, **p)
+        await ensure_serial(session, a)
+        session.add(a)
+        await session.flush()
+        first = first or a
+    return first
 
 
 async def _asset_update(session, principal, a: Asset, v: dict):
@@ -266,7 +277,7 @@ async def _asset_update(session, principal, a: Asset, v: dict):
     if p["serial_number"] and (await session.execute(select(Asset.id).where(Asset.serial_number == p["serial_number"], Asset.id != a.id))).first():
         raise RowError("serial_number", f"Serial {p['serial_number']} belongs to another asset")
     for k, val in p.items():
-        if k != "company_id":
+        if k not in ("company_id", "quantity") and not (k == "serial_number" and not val):
             setattr(a, k, val)
     a.version += 1
     return a
@@ -285,7 +296,7 @@ ASSETS = Dataset(
         F("asset_category", "Category", required=True, synonyms=["category", "type"], example="IT equipment"),
         F("brand", "Brand", synonyms=["brand name", "make"], example="Lenovo"),
         F("model", "Model", synonyms=["model name", "model no"], example="T14 Gen 4"),
-        F("serial_number", "Serial Number", synonyms=["serial no", "serial", "s/n", "sn"], example="PF-3XK91"),
+        F("serial_number", "Serial Number", synonyms=["serial no", "serial", "s/n", "sn"], example="PF-3XK91", help="Leave empty to number it automatically"),
         F("condition", "Condition", "choice", choices=COND, example="brand_new"),
         F("status", "Status", importable=False),
         F("department_code", "Department", synonyms=["department", "dept"], example="SAL"),
@@ -293,7 +304,7 @@ ASSETS = Dataset(
         F("issued_by_employee_id", "Issued By", importable=False),
         F("issued_to_employee_id", "Issued To", importable=False, help="Use Asset Assignment to issue assets"),
         F("issued_date", "Date Issued", "date", importable=False),
-        F("quantity", "Quantity", "int", synonyms=["qty"], example=1),
+        F("quantity", "Quantity", "int", synonyms=["qty"], example=1, help="New rows: that many items are registered, each with its own automatic serial"),
         F("unit", "Unit", example="unit"),
         F("purchase_date", "Purchase Date", "date", synonyms=["date purchased"], example="2026-01-15"),
         F("receiving_reference", "Receiving / Purchase Reference", synonyms=["purchase reference", "po", "dr", "or"], example="PO-2026-0101"),
@@ -366,7 +377,7 @@ async def _inv_find(session, principal, key, value, row=None):
 
 
 INVENTORY = Dataset(
-    key="inventory", label="Equipment Inventory", model=InventoryItem, importable=True, match_keys=["item_code"],
+    key="inventory", label="Consumables & Stock", model=InventoryItem, importable=True, match_keys=["item_code"],
     fields=[
         F("item_code", "Item Code", required=True, synonyms=["sku", "code", "item no"], example="TNR-85A"),
         F("company_code", "Company", synonyms=["company"], example="GPI"),

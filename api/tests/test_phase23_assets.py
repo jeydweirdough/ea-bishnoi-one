@@ -22,7 +22,24 @@ def test_register_and_unique_serial(users):
     a = r.json()
     assert a["reference"].startswith("EA-AST-") and a["serial_number"] == "PF-0001" and a["status"] == "in_stock"
     assert new_asset(admin, serial_number="PF-0001").status_code == 409  # case-insensitive duplicate
-    assert new_asset(admin, serial_number="PF-0002", quantity=3).status_code == 422  # serialized means one item
+    # Five of the same item: five records, each its own serial (typed ones first, then automatic ones).
+    five = new_asset(admin, name="Office chair", category="Furniture", count=5, serial_numbers=["CH-1", "ch-2"])
+    assert five.status_code == 201, five.text
+    made = five.json()["created"]
+    assert len(made) == 5 and [m["serial_number"] for m in made[:2]] == ["CH-1", "CH-2"]
+    autos = [m["serial_number"] for m in made[2:]]
+    assert all(x.startswith("GPI-FN-") for x in autos) and len(set(autos)) == 3
+    assert all(admin.get(f"/api/v1/assets/{m['id']}").json()["quantity"] == 1 for m in made)
+    # The old form sent quantity with one serial: that now registers that many items instead of failing.
+    old = new_asset(admin, serial_number="PF-0002", quantity=3)
+    assert old.status_code == 201 and len(old.json()["created"]) == 3 and old.json()["serial_number"] == "PF-0002"
+    assert new_asset(admin, count=2, serial_numbers=["A1", "A2", "A3"]).status_code == 422  # more serials than items
+    assert new_asset(admin, count=2, serial_numbers=["B1", "b1"]).status_code == 422  # same serial twice
+    # No serial typed: one is issued automatically and never reused.
+    auto = new_asset(admin).json()
+    assert auto["serial_number"].startswith("GPI-IT-")
+    patched = admin.patch(f"/api/v1/assets/{auto['id']}", {**{k: auto[k] for k in ("name", "category", "brand", "model")}, "serial_number": "", "version": auto["version"]})
+    assert patched.status_code == 200 and patched.json()["serial_number"] == auto["serial_number"]  # clearing keeps it
     assert new_asset(admin, name="").status_code == 422
     assert new_asset(admin, purchase_date=(date.today() + timedelta(days=2)).isoformat()).status_code == 422
     assert new_asset(users["carlo"]).status_code == 403  # employees cannot register
@@ -94,8 +111,8 @@ def test_receiving_registers_assets(users):
     assert any(p["request"]["id"] == req["id"] for p in pending)
     item = req["items"][0]["id"]
     assert admin.post("/api/v1/receiving", {"request_id": req["id"], "lines": [{"item_id": item, "quantity": 3}]}).status_code == 422  # too many
-    bad = admin.post("/api/v1/receiving", {"request_id": req["id"], "lines": [{"item_id": item, "quantity": 2, "register_asset": True, "serial_numbers": ["MN-1"]}]})
-    assert bad.status_code == 422  # one serial per unit
+    bad = admin.post("/api/v1/receiving", {"request_id": req["id"], "lines": [{"item_id": item, "quantity": 1, "register_asset": True, "serial_numbers": ["MN-1", "MN-9"]}]})
+    assert bad.status_code == 422  # more serials than items
     r = admin.post("/api/v1/receiving", {"request_id": req["id"], "delivery_reference": "DR-5512", "lines": [{"item_id": item, "quantity": 1, "register_asset": True, "serial_numbers": ["MN-1"]}]})
     assert r.status_code == 201, r.text
     rec = r.json()

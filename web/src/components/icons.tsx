@@ -1,4 +1,5 @@
 import {
+  Link2,
   Wallet,
   Archive,
   ArrowLeftRight,
@@ -94,6 +95,7 @@ export const ITEM_ICONS: Record<string, LucideIcon> = {
   "dashboard/priority-concerns": Flag,
 
   "requests/all": ListTodo,
+  "requests/from-link": Link2,
   "requests/asset-requests": ShoppingCart,
   "requests/local-purchase": Store,
   "requests/supplies": Boxes,

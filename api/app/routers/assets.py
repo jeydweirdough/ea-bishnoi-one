@@ -14,6 +14,7 @@ from ..models import Attachment, Employee, Request, RequestKind, RequestStatus a
 from ..models_ops import Asset, AssetCondition, AssetEvent, AssetRepair, AssetStatus, Receipt, RepairStatus
 from ..ops_common import check_version, company_for, count, day, department_in, employee_in, money, scoped
 from ..security import CurrentPrincipal, Principal, Session, Staff
+from ..asset_ids import MAX_PER_REGISTRATION, clean_serials, ensure_serial, next_serial, serial_in_use
 from ..serialize import attachment_out, iso, person
 from .photos import not_photo, photo_url
 from ..workflow import event as request_event, is_operator
@@ -122,24 +123,24 @@ class AssetIn(BaseModel):
         return v or None
 
 
+class AssetCreate(AssetIn):
+    # How many identical items to register. Each becomes its own record with its own serial number.
+    count: int = Field(1, ge=1, le=MAX_PER_REGISTRATION)
+    # Manufacturer serials, one per item, in order. Items without one get an automatic serial.
+    serial_numbers: list[str] = Field(default_factory=list, max_length=MAX_PER_REGISTRATION)
+
+
 class AssetPatch(AssetIn):
     version: int
 
 
 def validate_asset(body: AssetIn):
-    if body.serial_number and body.quantity != 1:
-        raise bad_request({"message": "A serialized asset is one item: set quantity to 1", "fields": {"quantity": "Must be 1 when a serial number is set"}})
     if body.purchase_date and body.purchase_date > date.today():
         raise bad_request({"message": "Purchase date cannot be in the future", "fields": {"purchase_date": "In the future"}})
 
 
 async def serial_taken(session, serial: str | None, exclude: int | None = None) -> bool:
-    if not serial:
-        return False
-    stmt = select(Asset.id).where(Asset.serial_number == serial)
-    if exclude:
-        stmt = stmt.where(Asset.id != exclude)
-    return (await session.execute(stmt)).first() is not None
+    return bool(serial) and await serial_in_use(session, serial, exclude)
 
 
 @router.get("/assets/options")
@@ -189,22 +190,38 @@ async def list_assets(
 
 
 @router.post("/assets", status_code=201)
-async def create_asset(body: AssetIn, principal: Staff, session: Session) -> dict:
+async def create_asset(body: AssetCreate, principal: Staff, session: Session) -> dict:
+    """Register one or more identical items. Each gets its own record and serial number, so each can be issued on its own."""
     validate_asset(body)
     cid = await company_for(session, principal, body.company_id)
     await department_in(session, body.department_id, cid)
-    if await serial_taken(session, body.serial_number):
-        raise conflict(f"Serial number {body.serial_number} is already registered")
-    data = body.model_dump(exclude={"company_id"})
-    a = Asset(reference=await next_reference(session, "AST"), company_id=cid, **data)
-    session.add(a)
-    try:
-        await session.flush()
-    except IntegrityError:
-        raise conflict(f"Serial number {body.serial_number} is already registered")
-    await log(session, a, principal, "registered", f"Registered as {CONDITION_LABEL[a.condition]}")
+    # Older clients sent "quantity" for several identical items: treat it as the number of records.
+    n = body.count if body.count > 1 or body.quantity <= 1 else min(body.quantity, MAX_PER_REGISTRATION)
+    serials = clean_serials(body.serial_numbers) or clean_serials([body.serial_number] if body.serial_number else [])
+    if len(serials) > n:
+        raise bad_request({"message": f"{len(serials)} serial numbers for {n} item{'s' if n != 1 else ''}: remove the extra ones or raise the quantity", "fields": {"serial_numbers": f"At most {n}"}})
+    dupes = sorted({x for x in serials if serials.count(x) > 1})
+    if dupes:
+        raise bad_request({"message": f"Serial {dupes[0]} is entered twice", "fields": {"serial_numbers": "Each serial once"}})
+    for sn in serials:
+        if await serial_taken(session, sn):
+            raise conflict(f"Serial number {sn} is already registered")
+    data = body.model_dump(exclude={"company_id", "count", "serial_numbers", "serial_number", "quantity"})
+    created: list[Asset] = []
+    for idx in range(n):
+        a = Asset(reference=await next_reference(session, "AST"), company_id=cid, quantity=1, serial_number=serials[idx] if idx < len(serials) else None, **data)
+        await ensure_serial(session, a)
+        session.add(a)
+        try:
+            await session.flush()
+        except IntegrityError:
+            raise conflict(f"Serial number {a.serial_number} is already registered")
+        note = f"Registered as {CONDITION_LABEL[a.condition]}" + (f" (item {idx + 1} of {n})" if n > 1 else "")
+        await log(session, a, principal, "registered", note, data={"serial": a.serial_number, "automatic_serial": idx >= len(serials)})
+        created.append(a)
     await session.commit()
-    return asset_out(await scoped(session, Asset, a.id, principal))
+    first = asset_out(await scoped(session, Asset, created[0].id, principal))
+    return {**first, "created": [{"id": a.id, "reference": a.reference, "serial_number": a.serial_number} for a in created]}
 
 
 async def asset_detail(session, principal: Principal, a: Asset) -> dict:
@@ -264,7 +281,9 @@ async def update_asset(asset_id: int, body: AssetPatch, principal: Staff, sessio
     if await serial_taken(session, body.serial_number, exclude=a.id):
         raise conflict(f"Serial number {body.serial_number} is already registered")
     changed = {}
-    for k, v in body.model_dump(exclude={"company_id", "version"}).items():
+    if not body.serial_number:  # cleared: keep the current one (every asset has a serial)
+        body.serial_number = a.serial_number or await next_serial(session, a.company_id, body.category)
+    for k, v in body.model_dump(exclude={"company_id", "version", "quantity", "unit"}).items():
         if getattr(a, k) != v:
             changed[k] = str(v)
             setattr(a, k, v)
@@ -598,8 +617,8 @@ async def receive(body: ReceiptIn, principal: Staff, session: Session) -> dict:
             errors[f"lines.{idx}.quantity"] = f"Only {remaining} {item.unit} still expected"
         serials = [s.strip().upper() for s in line.serial_numbers if s.strip()]
         if serials:
-            if len(serials) != line.quantity:
-                errors[f"lines.{idx}.serial_numbers"] = f"Enter {line.quantity} serial numbers, one per item"
+            if len(serials) > line.quantity:
+                errors[f"lines.{idx}.serial_numbers"] = f"{len(serials)} serial numbers for {line.quantity} items"
             for s in serials:
                 if s in seen_serials or await serial_taken(session, s):
                     errors[f"lines.{idx}.serial_numbers"] = f"Serial {s} is already registered"
@@ -621,9 +640,9 @@ async def receive(body: ReceiptIn, principal: Staff, session: Session) -> dict:
         item.received_quantity += line.quantity
         registered = []
         if line.register_asset:
-            serials = [s.strip().upper() for s in line.serial_numbers if s.strip()]
-            batches = [(s, 1) for s in serials] if serials else [(None, line.quantity)]
-            for serial, qty in batches:
+            serials = clean_serials(line.serial_numbers)
+            for n in range(line.quantity):
+                serial, qty = (serials[n] if n < len(serials) else None), 1
                 a = Asset(
                     reference=await next_reference(session, "AST"), company_id=req.company_id, department_id=req.department_id,
                     name=item.item_name, category=line.category or item.item_category or "Other", serial_number=serial,
@@ -631,10 +650,11 @@ async def receive(body: ReceiptIn, principal: Staff, session: Session) -> dict:
                     purchase_date=receipt.received_on, purchase_reference=body.delivery_reference or req.reference,
                     purpose=req.purpose, request_id=req.id,
                 )
+                await ensure_serial(session, a)
                 session.add(a)
                 await session.flush()
                 await log(session, a, principal, "received", f"Received on {receipt.reference} for {req.reference}", data={"receipt": receipt.reference})
-                registered.append({"id": a.id, "reference": a.reference, "serial_number": serial})
+                registered.append({"id": a.id, "reference": a.reference, "serial_number": a.serial_number})
         stocked = None
         if line.inventory_item_id:
             from .inventory import stock_in_from_receipt

@@ -113,3 +113,18 @@ def test_receiving_into_stock(users):
     r = admin.post("/api/v1/receiving", {"request_id": req["id"], "lines": [{"item_id": req["items"][0]["id"], "quantity": 4, "inventory_item_id": stock["id"]}]})
     assert r.status_code == 201, r.text
     assert admin.get(f"/api/v1/inventory/items/{stock['id']}").json()["on_hand"] == 4
+
+
+def test_consumables_get_codes_and_record_use(users):
+    admin, bea = users["admin"], users["assistant"]
+    a = item(admin, item_code="", name="Dishwashing liquid", category="Consumables", unit="bottle", opening_quantity=6, reorder_level=2).json()
+    b = item(admin, item_code="", name="Trash bags", category="Consumables", unit="pack", opening_quantity=3).json()
+    assert a["item_code"].startswith("GPI-CS-") and b["item_code"].startswith("GPI-CS-") and a["item_code"] != b["item_code"]
+    url = f"/api/v1/inventory/items/{a['id']}/move"
+    assert admin.post(url, {"kind": "use", "quantity": 1}).status_code == 422  # say what it was used for
+    assert admin.post(url, {"kind": "use", "quantity": 9, "reason": "Pantry"}).status_code == 409  # never below zero
+    d = bea.post(url, {"kind": "use", "quantity": 4, "reason": "Pantry, week 46"}).json()
+    assert d["on_hand"] == 2 and d["low"] and d["movements"][0]["kind"] == "use" and d["movements"][0]["quantity"] == -4
+    # Clearing the code on edit keeps it.
+    e = admin.patch(f"/api/v1/inventory/items/{a['id']}", {**{k: d[k] for k in ("name", "category", "unit", "location", "reorder_level", "reorder_quantity")}, "item_code": "", "version": d["version"]})
+    assert e.status_code == 200 and e.json()["item_code"] == a["item_code"]
