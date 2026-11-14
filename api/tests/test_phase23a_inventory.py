@@ -205,15 +205,41 @@ def test_proof_of_receipt_photos(users):
     # Stored clean: no camera or GPS data.
     full = admin.c.get(d["movements"][0]["proofs"][0]["full"], headers=admin.h)
     assert full.status_code == 200 and len(Image.open(io.BytesIO(full.content)).getexif()) == 0
-    # Only stock that came in takes proof; at most 4; staff only; not a photo → refused.
+    # Every kind of movement takes photo proof; camera shots keep when and where they were taken.
+    import json
+
     used = bea.post(f"/api/v1/inventory/items/{i['id']}/move", {"kind": "use", "quantity": 1, "reason": "Clinic"}).json()["movements"][0]
-    assert up(bea, used["id"]).status_code == 422
-    for _ in range(3):
+    meta = {"source": "camera", "taken_at": "2026-11-14T14:45:00+08:00", "lat": 14.5547, "lng": 121.0244, "accuracy_m": 12}
+    r = bea.c.post(f"/api/v1/inventory/movements/{used['id']}/proof", headers=bea.h, data={"meta": json.dumps(meta)}, files={"file": ("cam.jpg", jpeg_with_gps(), "image/jpeg")})
+    assert r.status_code == 201 and r.json()["meta"]["source"] == "camera" and r.json()["meta"]["lat"] == 14.5547
+    assert bea.c.post(f"/api/v1/inventory/movements/{used['id']}/proof", headers=bea.h, data={"meta": "{bad"}, files={"file": ("x.jpg", jpeg_with_gps(), "image/jpeg")}).status_code == 422
+    one = bea.get(f"/api/v1/inventory/movements/{used['id']}").json()
+    assert one["kind"] == "use" and one["item"]["name"] == "Alcohol 70%" and one["proofs"][0]["meta"]["accuracy_m"] == 12 and one["proofs"][0]["uploaded_by"]["name"]
+    # At most 6; staff only; not a photo → refused.
+    for _ in range(5):
         assert up(bea, got["id"]).status_code == 201
     assert up(bea, got["id"]).status_code == 422
     assert up(carlo, got["id"]).status_code == 403
-    assert carlo.c.get(d["movements"][0]["proofs"][0]["thumb"], headers=carlo.h).status_code == 403
+    assert carlo.c.get(d["movements"][0]["proofs"][0]["thumb"], headers=carlo.h).status_code == 404
+    assert carlo.get(f"/api/v1/inventory/movements/{used['id']}").status_code == 403
     assert up(bea, got["id"], b"not an image").status_code == 422
-    # The movements log shows them too.
+    # The movements log shows them too; old links still open.
     log = bea.get("/api/v1/inventory/movements?kind=stock_in").json()["items"]
-    assert any(len(m["proofs"]) == 4 for m in log)
+    assert any(len(m["proofs"]) == 6 for m in log)
+    assert admin.c.get(f"/api/v1/inventory/proofs/{one['proofs'][0]['id']}?size=thumb", headers=admin.h).status_code == 200
+
+
+def test_returns_come_from_people_who_have_it(users):
+    admin, eli, carlo = users["admin"], users["eli"], users["carlo"]
+    i = item(admin, item_code="PEN-B", name="Pen, black", category="Supplies", opening_quantity=20).json()
+    url = f"/api/v1/inventory/items/{i['id']}/move"
+    admin.post(url, {"kind": "issue", "quantity": 5, "issued_to_id": me_id(eli)})
+    admin.post(url, {"kind": "issue", "quantity": 2, "issued_to_id": me_id(carlo)})
+    d = admin.post(url, {"kind": "return", "quantity": 1, "issued_to_id": me_id(eli)}).json()
+    assert {h["person"]["name"]: h["quantity"] for h in d["holders"]} == {"Eli Navarro": 4, "Carlo Diaz": 2}
+    r = admin.post(url, {"kind": "return", "quantity": 3, "issued_to_id": me_id(carlo)})
+    assert r.status_code == 422 and "has only 2" in r.json()["detail"]["message"]
+    d = admin.post(url, {"kind": "return", "quantity": 2, "issued_to_id": me_id(carlo)}).json()
+    assert [h["person"]["name"] for h in d["holders"]] == ["Eli Navarro"]
+    # Someone who never had it can still hand pieces back (found in a drawer); no limit applies.
+    assert admin.post(url, {"kind": "return", "quantity": 1, "issued_to_id": me_id(users["dana"])}).status_code == 200

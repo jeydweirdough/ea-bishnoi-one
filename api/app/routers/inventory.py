@@ -1,13 +1,10 @@
 """Phase 2.3a — equipment inventory: stock lines, movements, reservations, reorders and counts."""
 
-import hashlib
-import secrets
 from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, File, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete as sa_delete, or_, select, update as sa_update
 from sqlalchemy.exc import IntegrityError
@@ -19,10 +16,10 @@ from ..models_ops3 import INV_CATEGORIES, InventoryCount, InventoryItem, StockMo
 from ..ops_common import check_version, company_for, count, day, employee_in, money, scoped
 from ..security import Principal, Session, Staff
 from ..serialize import iso, person
-from ..config import get_settings
 from ..models import Attachment
 from .attachments import storage_dir
-from .photos import photo_url, process as clean_photo
+from .photos import photo_url
+from ..proofs import get_proof, proof_out, proofs_for as _proofs_for, save_proof
 from ..workflow import event as request_event, is_operator
 
 
@@ -45,9 +42,9 @@ def item_out(i: InventoryItem) -> dict:
     }
 
 
-def movement_out(m: StockMovement, proofs: dict[int, list[int]] | None = None) -> dict:
+def movement_out(m: StockMovement, proofs: dict[int, list[dict]] | None = None) -> dict:
     return {
-        "proofs": [{"id": a, "thumb": f"/api/v1/inventory/proofs/{a}?size=thumb", "full": f"/api/v1/inventory/proofs/{a}?size=full"} for a in (proofs or {}).get(m.id, [])],
+        "proofs": (proofs or {}).get(m.id, []),
         "id": m.id, "reference": m.reference, "item_id": m.item_id, "kind": m.kind, "quantity": m.quantity, "balance_after": m.balance_after,
         "request_id": m.request_id, "receipt_id": m.receipt_id, "issued_to": person(m.issued_to), "reason": m.reason, "actor": person(m.actor), "at": iso(m.at),
     }
@@ -207,9 +204,11 @@ async def get_item(item_id: int, principal: Staff, session: Session) -> dict:
     other = (await session.execute(select(InventoryItem).where(InventoryItem.company_id == i.company_id, InventoryItem.item_code == i.item_code, InventoryItem.id != i.id))).scalars()
     moves = list(moves)
     proofs = await proofs_for(session, [m.id for m in moves])
+    every = (await session.execute(select(StockMovement).where(StockMovement.item_id == i.id, StockMovement.kind.in_(["issue", "return"])))).scalars().all()
     return {
         **item_out(i),
         "movements": [movement_out(m, proofs) for m in moves],
+        "holders": sorted(holders_of(every).values(), key=lambda h: h["person"]["name"]),
         "reservations": [{"id": r.id, "quantity": r.quantity, "request": {"id": r.request_id, "reference": reqs[r.request_id].reference, "subject": reqs[r.request_id].subject, "requester": person(reqs[r.request_id].requester)}} for r in res],
         "other_locations": [{"id": o.id, "location": o.location, "on_hand": o.on_hand, "available": o.available} for o in other],
         "can_adjust": can_adjust(principal),
@@ -296,6 +295,11 @@ async def move_stock(item_id: int, body: MoveIn, principal: Staff, session: Sess
         await move(session, principal, i, "write_off", -body.quantity, reason=reason)
     elif body.kind == "return":
         by = (await employee_in(session, body.issued_to_id, i.company_id, "issued_to_id")).id if body.issued_to_id else None
+        if by:
+            every = (await session.execute(select(StockMovement).where(StockMovement.item_id == i.id, StockMovement.kind.in_(["issue", "return"])))).scalars().all()
+            held = holders_of(every).get(by)
+            if held and body.quantity > held["quantity"]:
+                raise bad_request({"message": f"{held['person']['name']} has only {held['quantity']} {i.unit}", "fields": {"quantity": f"{held['person']['name']} has only {held['quantity']} {i.unit}"}})
         await move(session, principal, i, "return", body.quantity, reason=reason, issued_to_id=by)
     else:  # stock_in
         await move(session, principal, i, body.kind, body.quantity, reason=reason)
@@ -303,70 +307,56 @@ async def move_stock(item_id: int, body: MoveIn, principal: Staff, session: Sess
     return await get_item(i.id, principal, session)
 
 
-# ------------------------------------------------------------------ proof of receipt
-# Optional photos of what arrived (the delivery, the DR, the boxes), taken with the camera or
-# picked from the gallery. Re-encoded like item photos: upright, resized, no camera/GPS data.
-
-PROOF = "proof"
-PROOF_KINDS = ("stock_in", "return", "transfer_in")
-MAX_PROOFS = 4
+# ------------------------------------------------------------------ transactions: details and photo proof
 
 
-async def proofs_for(session, movement_ids: list[int]) -> dict[int, list[int]]:
-    out: dict[int, list[int]] = {}
-    if movement_ids:
-        rows = await session.execute(
-            select(Attachment.id, Attachment.owner_id).where(Attachment.owner_type == "stock_movement", Attachment.owner_id.in_(movement_ids), Attachment.purpose == PROOF).order_by(Attachment.id)
-        )
-        for aid, mid in rows.all():
-            out.setdefault(mid, []).append(aid)
-    return out
+async def proofs_for(session, movement_ids: list[int]) -> dict[int, list[dict]]:
+    return await _proofs_for(session, "stock_movement", movement_ids)
 
 
-@router.post("/movements/{movement_id}/proof", status_code=201)
-async def add_proof(movement_id: int, principal: Staff, session: Session, file: UploadFile = File(...)) -> dict:
+def holders_of(moves) -> dict[int, dict]:
+    """Who still has pieces of this stock line: issued to them minus returned by them."""
+    out: dict[int, dict] = {}
+    for m in moves:
+        if m.issued_to_id and m.kind in ("issue", "return"):
+            h = out.setdefault(m.issued_to_id, {"person": person(m.issued_to), "quantity": 0})
+            h["quantity"] -= m.quantity  # issues are negative, returns positive
+    return {k: v for k, v in out.items() if v["quantity"] > 0}
+
+
+@router.get("/movements/{movement_id}")
+async def get_movement(movement_id: int, principal: Staff, session: Session) -> dict:
+    """One transaction on a stock card, with its photo proof."""
     m = await session.get(StockMovement, movement_id)
     if m is None:
         raise not_found()
     item = await scoped(session, InventoryItem, m.item_id, principal)
-    if m.kind not in PROOF_KINDS:
-        raise bad_request({"message": "Proof of receipt goes on stock that came in"})
-    if len((await proofs_for(session, [m.id])).get(m.id, [])) >= MAX_PROOFS:
-        raise bad_request({"message": f"At most {MAX_PROOFS} proof photos per receipt"})
-    limit = get_settings().max_upload_mb * 1024 * 1024
-    data = await file.read(limit + 1)
-    if not data:
-        raise bad_request({"message": "The photo is empty"})
-    if len(data) > limit:
-        raise bad_request({"message": f"Photos must be {get_settings().max_upload_mb} MB or smaller"})
-    full, thumb = clean_photo(data)
-    key = secrets.token_hex(16)
-    (storage_dir() / key).write_bytes(full)
-    (storage_dir() / f"{key}_t").write_bytes(thumb)
-    att = Attachment(
-        owner_type="stock_movement", owner_id=m.id, filename=f"{m.reference}-proof.jpg", content_type="image/jpeg", size=len(full),
-        storage_key=key, sha256=hashlib.sha256(full).hexdigest(), uploaded_by_id=principal.id, purpose=PROOF,
-    )
-    session.add(att)
-    await session.flush()
-    await audit(session, actor_id=principal.id, action="inventory.proof_add", entity_type="inventory_item", entity_id=item.id, entity_ref=item.item_code, company_id=item.company_id, data={"movement": m.reference, "photo": att.id})
+    req = await session.get(Request, m.request_id) if m.request_id else None
+    other = await session.get(InventoryItem, m.counterpart_item_id) if m.counterpart_item_id else None
+    return {
+        **movement_out(m, await proofs_for(session, [m.id])),
+        "item": {"id": item.id, "item_code": item.item_code, "name": item.name, "location": item.location, "unit": item.unit, "photo": photo_url(item.photo_id)},
+        "request": {"id": req.id, "reference": req.reference, "subject": req.subject} if req else None,
+        "counterpart": {"id": other.id, "location": other.location} if other else None,
+    }
+
+
+@router.post("/movements/{movement_id}/proof", status_code=201)
+async def add_proof(movement_id: int, principal: Staff, session: Session, file: UploadFile = File(...), meta: str | None = Form(None)) -> dict:
+    m = await session.get(StockMovement, movement_id)
+    if m is None or m.kind in ("reserve", "release"):
+        raise not_found()
+    item = await scoped(session, InventoryItem, m.item_id, principal)
+    att = await save_proof(session, principal, "stock_movement", m.id, m.reference, file, meta)
+    await audit(session, actor_id=principal.id, action="inventory.proof_add", entity_type="inventory_item", entity_id=item.id, entity_ref=item.item_code, company_id=item.company_id, data={"movement": m.reference, "photo": att.id, "source": att.meta.get("source")})
     await session.commit()
-    return {"id": att.id, "thumb": f"/api/v1/inventory/proofs/{att.id}?size=thumb", "full": f"/api/v1/inventory/proofs/{att.id}?size=full"}
+    return proof_out(att)
 
 
 @router.get("/proofs/{photo_id}")
-async def get_proof(photo_id: int, principal: Staff, session: Session, size: Literal["thumb", "full"] = Query("thumb")):
-    att = await session.get(Attachment, photo_id)
-    if att is None or att.owner_type != "stock_movement" or att.purpose != PROOF:
-        raise not_found()
-    m = await session.get(StockMovement, att.owner_id)
-    if m is None:
-        raise not_found()
-    await scoped(session, InventoryItem, m.item_id, principal)
-    path = storage_dir() / (f"{att.storage_key}_t" if size == "thumb" else att.storage_key)
-    if not path.exists():
-        raise not_found("The stored photo is missing")
-    return FileResponse(path, media_type="image/jpeg", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
+async def get_proof_old_link(photo_id: int, principal: Staff, session: Session, size: Literal["thumb", "full"] = Query("thumb")):
+    """Links made before proofs moved to /api/v1/proofs."""
+    return await get_proof(photo_id, principal, session, size)
 
 
 async def rehome_files(session, asset_ids: list[int], item: InventoryItem) -> None:

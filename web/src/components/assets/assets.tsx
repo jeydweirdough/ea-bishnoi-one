@@ -26,9 +26,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { api, fmtDate, fmtRelative, fmtSize, invalidate, post, qs, useApi, ApiError, type Attachment, type Page, type Person } from "@/lib/api";
+import { api, fmtDate, fmtDateTime, fmtRelative, fmtSize, invalidate, post, qs, useApi, ApiError, type Attachment, type Page, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
 import { Button, Chip, Field, Input, Select, Textarea, buttonClass } from "@/components/ui/controls";
+import { ProofSection, type Proof } from "@/components/ui/proof-list";
 import { CountStrip, Dialog, EmptyState, ErrorState, Pager, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
@@ -76,7 +77,8 @@ export type Asset = {
   updated_at: string;
   version: number;
 };
-type AssetEvent = { id: number; type: string; message: string | null; actor: Person | null; from_holder: Person | null; to_holder: Person | null; at: string };
+type AssetEvent = { id: number; type: string; message: string | null; actor: Person | null; from_holder: Person | null; to_holder: Person | null; at: string; proofs?: Proof[] };
+type AssetEventDetail = AssetEvent & { data: Record<string, unknown>; asset: { id: number; reference: string; name: string; serial_number: string | null }; proofs: Proof[]; can_add_proof: boolean };
 type Repair = {
   id: number;
   reference: string;
@@ -667,6 +669,7 @@ export function AssetDetailView({ id }: { id: number }) {
   const [dialog, setDialog] = useState<ActionKey | null>(null);
   const [repair, setRepair] = useState<Repair | null>(null);
   const [toStock, setToStock] = useState(false);
+  const [eventId, setEventId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   if (q.error) return <PageFrame><ErrorState message={q.error.status === 404 ? "This asset doesn't exist or isn't shared with you." : q.error.message} /></PageFrame>;
   const a = q.data;
@@ -830,18 +833,32 @@ export function AssetDetailView({ id }: { id: number }) {
           <Panel title="History">
             <ol className="px-4 py-4 sm:px-5">
               {a.events.map((e, i) => (
-                <li key={e.id} className="relative flex gap-3 pb-4 last:pb-0">
+                <li key={e.id} className="relative pb-2 last:pb-0">
                   {i < a.events.length - 1 && <span className="absolute left-[13px] top-7 h-[calc(100%-20px)] w-px bg-line" aria-hidden="true" />}
-                  <span className="relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full bg-sheet ring-1 ring-edge" aria-hidden="true">
-                    <span className="size-1.5 rounded-full bg-ink-3" />
-                  </span>
-                  <div className="min-w-0 pt-0.5">
-                    <p className="text-[13.5px]">
-                      <span className="font-medium">{EVENT_LABEL[e.type] ?? e.type}</span>
-                      <span className="text-ink-3"> · {e.actor?.name ?? "System"} · {fmtRelative(e.at)}</span>
-                    </p>
-                    {e.message && <p className="mt-0.5 text-[13.5px] text-ink-2">{e.message}</p>}
-                  </div>
+                  <button type="button" onClick={() => setEventId(e.id)} className="-mx-2 flex w-[calc(100%+16px)] gap-3 rounded-[var(--radius-ctl)] px-2 py-1.5 text-left transition-colors duration-150 hover:bg-canvas" aria-label={`${EVENT_LABEL[e.type] ?? e.type}, ${fmtRelative(e.at)}: open details`}>
+                    <span className="relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full bg-sheet ring-1 ring-edge" aria-hidden="true">
+                      <span className="size-1.5 rounded-full bg-ink-3" />
+                    </span>
+                    <span className="min-w-0 flex-1 pt-0.5">
+                      <span className="block text-[13.5px]">
+                        <span className="font-medium">{EVENT_LABEL[e.type] ?? e.type}</span>
+                        <span className="text-ink-3"> · {e.actor?.name ?? "System"} · {fmtRelative(e.at)}</span>
+                      </span>
+                      {e.message && <span className="mt-0.5 block text-[13.5px] text-ink-2">{e.message}</span>}
+                      {(e.proofs?.length ?? 0) > 0 && (
+                        <span className="mt-1.5 flex items-center gap-1.5">
+                          {e.proofs!.slice(0, 4).map((p) => (
+                            // eslint-disable-next-line @next/next/no-img-element -- private API image
+                            <img key={p.id} src={p.thumb} alt="" loading="lazy" className="size-10 rounded-[6px] border border-line object-cover" />
+                          ))}
+                          <span className="text-[11.5px] text-ink-3">
+                            {e.proofs!.length} photo{e.proofs!.length === 1 ? "" : "s"}
+                          </span>
+                        </span>
+                      )}
+                    </span>
+                    <ChevronRight className="mt-1.5 size-4 shrink-0 text-mute" strokeWidth={1.75} aria-hidden="true" />
+                  </button>
                 </li>
               ))}
             </ol>
@@ -913,6 +930,19 @@ export function AssetDetailView({ id }: { id: number }) {
         fields={spec?.fields ?? []}
         initial={spec?.initial}
         submitLabel={spec?.label}
+        proof={
+          dialog && ["assign", "return", "transfer", "retire"].includes(dialog)
+            ? {
+                url: (s) => {
+                  const ev = (s as AssetDetail | undefined)?.events?.[0];
+                  return ev ? `/api/v1/assets/events/${ev.id}/proof` : null;
+                },
+                title: dialog === "assign" ? "Proof of handover" : dialog === "return" ? "Proof of return" : "Photo proof",
+                note: dialog === "assign" ? "optional · the item with the person receiving it" : dialog === "return" ? "optional · what came back and its condition" : "optional · date, time and location are stamped on camera photos",
+                label: `${spec?.label ?? ""} · ${a.name}`,
+              }
+            : undefined
+        }
         onSubmit={async (p) => {
           const body = dialog === "edit" ? { ...p, version: a.version } : p;
           const res = await api<AssetDetail | Repair>(spec!.url, { method: spec!.method ?? "POST", json: body });
@@ -921,9 +951,11 @@ export function AssetDetailView({ id }: { id: number }) {
           const n = "issued_together" in res ? res.issued_together.length : 0;
           toast(dialog === "assign" && n > 1 && "issue_ref" in res ? `Issued ${n} items · ${res.issue_ref}` : `${spec!.done} · ${a.reference}`);
           invalidate();
+          return res;
         }}
       />
       {toStock && <ToStockDialog asset={a} onClose={() => setToStock(false)} />}
+      {eventId !== null && <AssetEventDialog id={eventId} onClose={() => setEventId(null)} onChanged={q.reload} />}
       <RecordDialog
         open={Boolean(repair)}
         onClose={() => setRepair(null)}
@@ -990,6 +1022,56 @@ export function RecordAttachments({ ownerType, ownerId, items, canAdd, onChange 
 }
 
 /* ---------------------------------------------------------------- employee: my assets */
+
+/** One history entry: what happened, who, when, and its photo proof. */
+function AssetEventDialog({ id, onClose, onChanged }: { id: number; onClose: () => void; onChanged: () => void }) {
+  const q = useApi<AssetEventDetail>(`/api/v1/assets/events/${id}`);
+  const e = q.data;
+  const label = e ? EVENT_LABEL[e.type] ?? e.type : "";
+  const rows: [string, React.ReactNode][] = e
+    ? [
+        ["When", fmtDateTime(e.at)],
+        ["By", e.actor?.name ?? "System"],
+        ...(e.to_holder ? [["To", e.to_holder.name] as [string, React.ReactNode]] : []),
+        ...(e.from_holder ? [["From", e.from_holder.name] as [string, React.ReactNode]] : []),
+        ...(typeof e.data.condition === "string" ? [["Condition", conditionLabel(e.data.condition)] as [string, React.ReactNode]] : []),
+        ...(typeof e.data.issue_ref === "string" ? [["Issuance", e.data.issue_ref] as [string, React.ReactNode]] : []),
+        ...(e.message ? [["Note", e.message] as [string, React.ReactNode]] : []),
+      ]
+    : [];
+  return (
+    <Dialog open onClose={onClose} wide title={e ? label : "History"} description={e ? `${e.asset.name} · ${e.asset.reference}${e.asset.serial_number ? ` · SN ${e.asset.serial_number}` : ""}` : undefined} footer={<Button onClick={onClose}>Close</Button>}>
+      {q.error ? (
+        <ErrorState message={q.error.message} />
+      ) : !e ? (
+        <SkeletonRows rows={3} />
+      ) : (
+        <div className="flex flex-col gap-5">
+          <dl className="divide-y divide-line rounded-[var(--radius-ctl)] border border-line text-[13.5px]">
+            {rows.map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3 px-3.5 py-2.5">
+                <dt className="text-ink-3">{k}</dt>
+                <dd className="text-right font-medium">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          <section>
+            <h3 className="mb-2 text-[14px] font-bold">Photo proof</h3>
+            <ProofSection
+              proofs={e.proofs}
+              addUrl={e.can_add_proof ? `/api/v1/assets/events/${e.id}/proof` : undefined}
+              label={`${label} · ${e.asset.name}`}
+              onAdded={() => {
+                q.reload();
+                onChanged();
+              }}
+            />
+          </section>
+        </div>
+      )}
+    </Dialog>
+  );
+}
 
 type ToStockPlan = { name: string; count: number; in_stock: number; issued: { holder: Person; quantity: number }[]; location: string | null; blocked: string | null };
 

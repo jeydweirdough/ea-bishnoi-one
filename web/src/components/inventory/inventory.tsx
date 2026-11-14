@@ -7,6 +7,7 @@ import {
   ArrowLeftRight,
   ArrowUpFromLine,
   PackageMinus,
+  Camera,
   Ban,
   Boxes,
   ChevronRight,
@@ -27,14 +28,15 @@ import {
 import { api, fmtDateTime, fmtRelative, invalidate, post, qs, useApi, type ApiError, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
 import { Button, Chip, Input, Select } from "@/components/ui/controls";
-import { CountStrip, EmptyState, ErrorState, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
+import { CountStrip, Dialog, EmptyState, ErrorState, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
 import { DataTools } from "@/components/io/data-tools";
 import { DocumentsPanel } from "@/components/documents/documents";
 import { peso } from "@/components/fleet/fleet";
 import { useRouter } from "next/navigation";
-import { ItemThumb, PhotoGallery, Viewer } from "@/components/ui/photos";
+import { ItemThumb, PhotoGallery } from "@/components/ui/photos";
+import { ProofSection, type Proof } from "@/components/ui/proof-list";
 import { cn } from "@/lib/cn";
 
 type Item = {
@@ -62,9 +64,9 @@ type Item = {
   low: boolean;
   version: number;
 };
-type Proof = { id: number; thumb: string; full: string };
 type Move = { id: number; proofs?: Proof[]; reference: string; kind: string; quantity: number; balance_after: number; issued_to: Person | null; reason: string | null; actor: Person; at: string; request_id: number | null; item?: { id: number; item_code: string; name: string; location: string; unit: string } };
-type ItemDetail = Item & { movements: Move[]; reservations: { id: number; quantity: number; request: { id: number; reference: string; subject: string; requester: Person } }[]; other_locations: { id: number; location: string; on_hand: number; available: number }[]; can_adjust: boolean; can_write_off: boolean };
+type MoveDetail = Move & { item: { id: number; item_code: string; name: string; location: string; unit: string; photo: string | null }; request: { id: number; reference: string; subject: string } | null; counterpart: { id: number; location: string } | null };
+type ItemDetail = Item & { holders: { person: Person; quantity: number }[]; movements: Move[]; reservations: { id: number; quantity: number; request: { id: number; reference: string; subject: string; requester: Person } }[]; other_locations: { id: number; location: string; on_hand: number; available: number }[]; can_adjust: boolean; can_write_off: boolean };
 type Options = { categories: string[]; locations: string[]; can_adjust: boolean; can_write_off: boolean };
 
 const KIND_LABEL: Record<string, string> = { stock_in: "Stock in", issue: "Issued", use: "Used", transfer_out: "Transferred out", transfer_in: "Transferred in", return: "Returned", adjustment: "Adjustment", write_off: "Written off", reserve: "Reserved", release: "Released" };
@@ -143,7 +145,16 @@ export function InventoryPage() {
         initial={{ category: "Consumables", unit: "pc", opening_quantity: "0", reorder_level: "0" }}
         submitLabel="Add item"
         photos="inventory_item"
-        proof={{ movementId: (s) => (s as { opening_movement_id?: number | null })?.opening_movement_id, when: (v) => Number(v.opening_quantity || 0) > 0 }}
+        proof={{
+          url: (s) => {
+            const id = (s as { opening_movement_id?: number | null })?.opening_movement_id;
+            return id ? `/api/v1/inventory/movements/${id}/proof` : null;
+          },
+          when: (v) => Number(v.opening_quantity || 0) > 0,
+          title: "Proof of receipt",
+          note: "optional · the delivery, DR or receipt",
+          label: "Stock in",
+        }}
         onSubmit={async (p) => {
           const i = await post<Item>("/api/v1/inventory/items", normalize(p));
           toast(`Added · ${i.item_code} at ${i.location}`);
@@ -506,52 +517,120 @@ function MovesView() {
 
 function MoveRow({ m, showItem }: { m: Move; showItem?: boolean }) {
   const I = KIND_ICON[m.kind] ?? ArrowLeftRight;
-  const [viewing, setViewing] = useState<number | null>(null);
+  const [open, setOpen] = useState(false);
   const proofs = m.proofs ?? [];
   return (
-    <li className="flex items-start gap-3 px-4 py-3 sm:px-5">
-      <I className="mt-0.5 size-[18px] shrink-0 text-ink-3" strokeWidth={1.75} aria-hidden="true" />
-      <span className="min-w-0 flex-1">
-        <span className="block text-[14px]">
-          <span className="font-medium">{KIND_LABEL[m.kind] ?? m.kind}</span>
-          {showItem && m.item ? (
-            <Link href={`/stock/${m.item.id}`} className="text-ink-2 hover:underline">
-              {" "}
-              · {m.item.name} ({m.item.location})
-            </Link>
-          ) : null}
-        </span>
-        <span className="block text-[12.5px] text-ink-3">
-          {m.actor.name} · {fmtDateTime(m.at)}
-          {m.issued_to ? ` · ${m.kind === "return" ? "from" : "to"} ${m.issued_to.name}` : ""}
-          {m.reason ? ` · ${m.reason}` : ""}
-        </span>
-        {proofs.length > 0 && (
-          <span className="mt-2 flex flex-wrap items-center gap-1.5">
-            {proofs.map((p, n) => (
-              <button key={p.id} type="button" onClick={() => setViewing(n)} aria-label={`Open proof of receipt ${n + 1}`} className="block overflow-hidden rounded-[6px] border border-line">
-                {/* eslint-disable-next-line @next/next/no-img-element -- private API image */}
-                <img src={p.thumb} alt="" loading="lazy" className="size-11 object-cover" />
-              </button>
-            ))}
-            <span className="text-[11.5px] text-ink-3">Proof of receipt</span>
+    <li>
+      <button type="button" onClick={() => setOpen(true)} className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-canvas sm:px-5" aria-label={`${KIND_LABEL[m.kind] ?? m.kind} ${m.quantity > 0 ? `+${m.quantity}` : m.quantity}, ${fmtDateTime(m.at)}: open details`}>
+        <I className="mt-0.5 size-[18px] shrink-0 text-ink-3" strokeWidth={1.75} aria-hidden="true" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[14px]">
+            <span className="font-medium">{KIND_LABEL[m.kind] ?? m.kind}</span>
+            {showItem && m.item ? (
+              <span className="text-ink-2">
+                {" "}
+                · {m.item.name} ({m.item.location})
+              </span>
+            ) : null}
           </span>
-        )}
-      </span>
-      {viewing !== null && proofs[viewing] && (
-        <Viewer photos={proofs.map((p) => ({ ...p, main: false }))} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} canEdit={false} onChanged={() => undefined} />
-      )}
-      <span className="shrink-0 text-right">
-        <span className={cn("tabular block text-[14px] font-bold", m.quantity < 0 && "text-ink-2")}>{m.quantity > 0 ? `+${m.quantity}` : m.quantity}</span>
-        <span className="tabular block text-[11.5px] text-ink-3">bal. {m.balance_after}</span>
-      </span>
+          <span className="block text-[12.5px] text-ink-3">
+            {m.actor.name} · {fmtDateTime(m.at)}
+            {m.issued_to ? ` · ${m.kind === "return" ? "from" : "to"} ${m.issued_to.name}` : ""}
+            {m.reason ? ` · ${m.reason}` : ""}
+          </span>
+          {proofs.length > 0 && (
+            <span className="mt-2 flex flex-wrap items-center gap-1.5">
+              {proofs.slice(0, 4).map((p) => (
+                // eslint-disable-next-line @next/next/no-img-element -- private API image
+                <img key={p.id} src={p.thumb} alt="" loading="lazy" className="size-11 rounded-[6px] border border-line object-cover" />
+              ))}
+              <span className="inline-flex items-center gap-1 text-[11.5px] text-ink-3">
+                <Camera className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                {proofs.length} photo{proofs.length === 1 ? "" : "s"}
+              </span>
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-right">
+          <span className={cn("tabular block text-[14px] font-bold", m.quantity < 0 && "text-ink-2")}>{m.quantity > 0 ? `+${m.quantity}` : m.quantity}</span>
+          <span className="tabular block text-[11.5px] text-ink-3">bal. {m.balance_after}</span>
+        </span>
+        <ChevronRight className="mt-0.5 size-4 shrink-0 text-mute" strokeWidth={1.75} aria-hidden="true" />
+      </button>
+      {open && <MovementDialog id={m.id} onClose={() => setOpen(false)} />}
     </li>
+  );
+}
+
+/** One transaction: what, how many, who, when, the note and request, and its photo proof. */
+function MovementDialog({ id, onClose }: { id: number; onClose: () => void }) {
+  const q = useApi<MoveDetail>(`/api/v1/inventory/movements/${id}`);
+  const m = q.data;
+  const label = m ? KIND_LABEL[m.kind] ?? m.kind : "";
+  const rows: [string, React.ReactNode][] = m
+    ? [
+        ["When", fmtDateTime(m.at)],
+        ["Recorded by", m.actor.name],
+        ...(m.issued_to ? [[m.kind === "return" ? "Returned by" : "Issued to", m.issued_to.name] as [string, React.ReactNode]] : []),
+        ["Quantity", `${m.quantity > 0 ? "+" : ""}${m.quantity} ${m.item.unit}`],
+        ["Balance after", `${m.balance_after} ${m.item.unit}`],
+        ...(m.reason ? [["Note", m.reason] as [string, React.ReactNode]] : []),
+        ...(m.request
+          ? [["Request", <Link key="r" href={`/r/${m.request.id}`} className="font-medium underline underline-offset-2">{m.request.reference}</Link>] as [string, React.ReactNode]]
+          : []),
+        ...(m.counterpart
+          ? [[m.kind === "transfer_out" ? "To" : "From", <Link key="c" href={`/stock/${m.counterpart.id}`} className="font-medium underline underline-offset-2">{m.counterpart.location}</Link>] as [string, React.ReactNode]]
+          : []),
+        ["Reference", <span key="ref" className="tabular">{m.reference}</span>],
+      ]
+    : [];
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      wide
+      title={m ? `${label} · ${m.quantity > 0 ? "+" : ""}${m.quantity} ${m.item.unit}` : "Transaction"}
+      description={m ? `${m.item.name} · ${m.item.location}` : undefined}
+      footer={<Button onClick={onClose}>Close</Button>}
+    >
+      {q.error ? (
+        <ErrorState message={q.error.message} />
+      ) : !m ? (
+        <SkeletonRows rows={3} />
+      ) : (
+        <div className="flex flex-col gap-5">
+          <dl className="divide-y divide-line rounded-[var(--radius-ctl)] border border-line text-[13.5px]">
+            {rows.map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3 px-3.5 py-2.5">
+                <dt className="text-ink-3">{k}</dt>
+                <dd className="text-right font-medium">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          <section>
+            <h3 className="mb-2 text-[14px] font-bold">Photo proof</h3>
+            <ProofSection proofs={m.proofs ?? []} addUrl={`/api/v1/inventory/movements/${m.id}/proof`} label={`${label} · ${m.item.name}`} onAdded={q.reload} />
+          </section>
+        </div>
+      )}
+    </Dialog>
   );
 }
 
 /* ---------------------------------------------------------------- item page */
 
 type MoveKind = "stock_in" | "issue" | "use" | "transfer" | "return" | "adjustment" | "write_off";
+
+/** What the optional photo proof shows, per transaction. */
+const PROOF_TEXT: Record<MoveKind, { title: string; note: string }> = {
+  stock_in: { title: "Proof of receipt", note: "optional · the delivery, DR or receipt" },
+  issue: { title: "Proof of handover", note: "optional · the item with the person receiving it" },
+  use: { title: "Photo proof", note: "optional · where it was used" },
+  transfer: { title: "Photo proof", note: "optional · the items being moved" },
+  return: { title: "Proof of return", note: "optional · what came back and its condition" },
+  adjustment: { title: "Photo proof", note: "optional · what was found" },
+  write_off: { title: "Photo proof", note: "optional · the damage, loss or expiry" },
+};
 
 export function StockItemView({ id }: { id: number }) {
   const toast = useToast();
@@ -566,7 +645,19 @@ export function StockItemView({ id }: { id: number }) {
     issue: { title: "Issue stock", label: "Issue", fields: [{ name: "issued_to_id", label: "Issue to", type: "person", required: true, placeholder: "Choose a person" }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true, hint: `${i.available} available` }, { name: "reason", label: "Note", half: true }] },
     use: { title: "Record use", label: "Record use", fields: [{ name: "quantity", label: "Quantity used", type: "number", required: true, half: true, hint: `${i.available} available` }, { name: "reason", label: "Used for", required: true, half: true, placeholder: "e.g. Pantry, printing, cleaning" }] },
     transfer: { title: "Transfer to another location", label: "Transfer", fields: [{ name: "to_location", label: "To location", required: true, half: true }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Note" }] },
-    return: { title: "Return to stock", label: "Return", fields: [{ name: "issued_to_id", label: "Returned by", type: "person", placeholder: "Choose a person" }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Note", half: true }] },
+    return: {
+      title: "Return to stock",
+      label: "Return",
+      fields: [
+        {
+          name: "returned_by", label: "Returned by", type: "select", required: true,
+          options: [...i.holders.map((h) => ({ value: String(h.person.id), label: `${h.person.name} · has ${h.quantity} ${i.unit}` })), { value: "other", label: i.holders.length ? "Someone else…" : "Choose a person…" }],
+        },
+        { name: "issued_to_id", label: "Who returned it?", type: "person", required: true, placeholder: "Choose a person", show: (v) => v.returned_by === "other" },
+        { name: "quantity", label: "Quantity", type: "number", required: true, half: true },
+        { name: "reason", label: "Note", half: true },
+      ],
+    },
     adjustment: { title: "Adjust count", label: "Adjust", fields: [{ name: "direction", label: "Direction", type: "select", required: true, half: true, options: [{ value: "add", label: "Add" }, { value: "remove", label: "Remove" }] }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Reason", type: "textarea", required: true }] },
     write_off: { title: "Write off", label: "Write off", fields: [{ name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Reason (damaged, lost, expired…)", type: "textarea", required: true }] },
   };
@@ -697,11 +788,24 @@ export function StockItemView({ id }: { id: number }) {
         title={spec?.title ?? ""}
         description={`${i.name} · ${i.location}`}
         fields={spec?.fields ?? []}
-        initial={dialog === "adjustment" ? { direction: "add" } : undefined}
+        initial={dialog === "adjustment" ? { direction: "add" } : dialog === "return" ? { returned_by: i.holders.length ? String(i.holders[0].person.id) : "other" } : undefined}
         submitLabel={spec?.label}
-        proof={dialog === "stock_in" || dialog === "return" ? { movementId: (s) => (s as ItemDetail).movements[0]?.id } : undefined}
+        proof={
+          dialog && dialog !== "edit"
+            ? {
+                url: (s) => {
+                  const mid = (s as ItemDetail).movements[0]?.id;
+                  return mid ? `/api/v1/inventory/movements/${mid}/proof` : null;
+                },
+                ...PROOF_TEXT[dialog],
+                label: `${spec?.label ?? ""} · ${i.name}`,
+              }
+            : undefined
+        }
         onSubmit={async (p) => {
-          const res = await post<ItemDetail>(`/api/v1/inventory/items/${i.id}/move`, { ...p, kind: dialog });
+          const { returned_by, ...rest } = p;
+          if (dialog === "return" && returned_by !== "other") rest.issued_to_id = Number(returned_by);
+          const res = await post<ItemDetail>(`/api/v1/inventory/items/${i.id}/move`, { ...rest, kind: dialog });
           q.setData(res);
           toast(`${spec!.label} · ${res.on_hand} ${res.unit} on hand`);
           invalidate();

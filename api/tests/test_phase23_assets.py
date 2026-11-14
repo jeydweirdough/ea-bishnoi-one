@@ -242,3 +242,25 @@ def test_consumable_moved_to_stock_by_quantity(users):
     admin.post(f"/api/v1/assets/{lap['id']}/repairs", {"issue": "Screen"})
     assert admin.get(f"/api/v1/assets/{lap['id']}/to-stock").json()["blocked"]
     assert admin.post(f"/api/v1/assets/{lap['id']}/to-stock", {"location": "X"}).status_code == 409
+
+
+
+def test_asset_history_entries_take_photo_proof(users):
+    import json
+
+    from .test_item_photos import jpeg_with_gps
+
+    admin, carlo, eli = users["admin"], users["carlo"], users["eli"]
+    a = new_asset(admin, name="Proof laptop").json()
+    d = admin.post(f"/api/v1/assets/{a['id']}/assign", {"employee_id": me_id(carlo)}).json()
+    ev = d["events"][0]
+    assert ev["type"] == "assigned" and ev["proofs"] == []
+    up = lambda u, meta=None: u.c.post(f"/api/v1/assets/events/{ev['id']}/proof", headers=u.h, data={"meta": json.dumps(meta)} if meta else {}, files={"file": ("p.jpg", jpeg_with_gps(), "image/jpeg")})
+    assert up(admin, {"source": "camera", "taken_at": "2026-11-14T09:00:00+08:00", "lat": 14.6, "lng": 121.0}).status_code == 201
+    assert up(carlo).status_code == 201  # the holder can add a photo of what they received
+    assert up(eli).status_code == 404  # not theirs
+    one = carlo.get(f"/api/v1/assets/events/{ev['id']}").json()
+    assert one["asset"]["name"] == "Proof laptop" and len(one["proofs"]) == 2 and one["proofs"][0]["meta"]["source"] == "camera" and one["proofs"][1]["meta"]["source"] == "upload"
+    assert carlo.c.get(one["proofs"][0]["thumb"], headers=carlo.h).status_code == 200
+    assert eli.c.get(one["proofs"][0]["thumb"], headers=eli.h).status_code == 404
+    assert len(admin.get(f"/api/v1/assets/{a['id']}").json()["events"][0]["proofs"]) == 2

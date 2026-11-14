@@ -348,7 +348,9 @@ class Attachment(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    purpose: Mapped[str | None] = mapped_column(String(60))  # e.g. "evidence", "completion"
+    purpose: Mapped[str | None] = mapped_column(String(60))  # e.g. "evidence", "completion", "proof"
+    # Proof photos: how it was taken (camera / upload), when and where (if the person allowed location).
+    meta: Mapped[dict | None] = mapped_column(JSON)
 
     uploaded_by: Mapped[Employee] = relationship(lazy="joined")
 

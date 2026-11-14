@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +17,7 @@ from ..security import CurrentPrincipal, Principal, Session, Staff
 from ..asset_ids import MAX_PER_REGISTRATION, clean_serials, ensure_serial, next_serial, serial_in_use
 from ..serialize import attachment_out, iso, person
 from .photos import not_photo, photo_url
+from ..proofs import proof_out, proofs_for, save_proof
 from ..workflow import event as request_event, is_operator
 
 router = APIRouter(prefix="/api/v1", tags=["assets"])
@@ -268,13 +269,15 @@ async def asset_detail(session, principal: Principal, a: Asset) -> dict:
     spare = 0
     if staff and not a.holder_id and a.status == AssetStatus.in_stock:
         spare = await count(session, identical_in_stock(a))
+    ev_list = list(events)
+    proofs = await proofs_for(session, "asset_event", [e.id for e in ev_list])
     return {
         **asset_out(a),
         "issued_together": [{"id": x.id, "reference": x.reference, "name": x.name, "serial_number": x.serial_number, "acknowledged": bool(x.acknowledged_at)} for x in together] if len(together) > 1 else [],
         "identical_in_stock": spare,
         "events": [
-            {"id": e.id, "type": e.type, "message": e.message, "actor": person(e.actor), "from_holder": person(e.from_holder), "to_holder": person(e.to_holder), "at": iso(e.at)}
-            for e in events
+            {"id": e.id, "type": e.type, "message": e.message, "actor": person(e.actor), "from_holder": person(e.from_holder), "to_holder": person(e.to_holder), "at": iso(e.at), "proofs": proofs.get(e.id, [])}
+            for e in ev_list
         ],
         "repairs": [repair_out(r) for r in repairs],
         "attachments": [attachment_out(x) for x in atts],
@@ -879,3 +882,36 @@ async def my_supplies(principal: CurrentPrincipal, session: Session) -> list[dic
          "kind": m.kind, "quantity": abs(m.quantity), "unit": items[m.item_id].unit, "note": m.reason, "at": iso(m.at), "by": person(m.actor)}
         for m in rows
     ]
+
+
+# ------------------------------------------------------------------ one history entry, with photo proof
+
+
+@router.get("/assets/events/{event_id}")
+async def get_asset_event(event_id: int, principal: CurrentPrincipal, session: Session) -> dict:
+    e = await session.get(AssetEvent, event_id)
+    if e is None:
+        raise not_found()
+    a = await load_asset_for(session, principal, e.asset_id)
+    staff = principal.is_staff and a.company_id in principal.company_ids
+    return {
+        "id": e.id, "type": e.type, "message": e.message, "actor": person(e.actor), "from_holder": person(e.from_holder), "to_holder": person(e.to_holder), "at": iso(e.at),
+        "data": {k: v for k, v in (e.data or {}).items() if k in ("condition", "issue_ref", "items", "reason")},
+        "asset": {"id": a.id, "reference": a.reference, "name": a.name, "serial_number": a.serial_number, "photo": photo_url(a.photo_id)},
+        "proofs": (await proofs_for(session, "asset_event", [e.id])).get(e.id, []),
+        "can_add_proof": staff or a.holder_id == principal.id,
+    }
+
+
+@router.post("/assets/events/{event_id}/proof", status_code=201)
+async def add_asset_event_proof(event_id: int, principal: CurrentPrincipal, session: Session, file: UploadFile = File(...), meta: str | None = Form(None)) -> dict:
+    e = await session.get(AssetEvent, event_id)
+    if e is None:
+        raise not_found()
+    a = await load_asset_for(session, principal, e.asset_id)
+    if not (principal.is_staff and a.company_id in principal.company_ids) and a.holder_id != principal.id:
+        raise forbidden("Only Executive Admin staff or the person holding it can add photos")
+    att = await save_proof(session, principal, "asset_event", e.id, a.reference, file, meta)
+    await audit(session, actor_id=principal.id, action="asset.proof_add", entity_type="asset", entity_id=a.id, entity_ref=a.reference, company_id=a.company_id, data={"event": e.id, "photo": att.id, "source": att.meta.get("source")})
+    await session.commit()
+    return proof_out(att)

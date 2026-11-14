@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { Camera, CloudUpload, FolderOpen, Paperclip, TriangleAlert, X } from "lucide-react";
 import { Button } from "./controls";
+import { ProofCamera, canUseLiveCamera, currentFix, stampFile } from "./proof-camera";
 import { cn } from "@/lib/cn";
 
 /**
@@ -97,6 +98,7 @@ export function FileDrop({
   compact,
   browseLabel,
   inputLabel,
+  stamp,
   className,
   children,
 }: {
@@ -113,10 +115,14 @@ export function FileDrop({
   browseLabel?: string;
   /** Accessible name of the hidden file input (tests use it). */
   inputLabel?: string;
+  /** Photo proof: Take photo opens the full-screen camera and stamps date, time and location (this text is the stamp's label). */
+  stamp?: string;
   className?: string;
   children?: React.ReactNode;
 }) {
   const touch = useTouchDevice();
+  const live = useSyncExternalStore(subscribe, canUseLiveCamera, () => false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const browseInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
@@ -139,9 +145,18 @@ export function FileDrop({
     e.target.value = "";
     take(files);
   };
+  // The phone's own camera app: stamp what comes back.
+  const pickCamera = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (!stamp) return take(files);
+    const fix = await currentFix();
+    take(await Promise.all(files.map((f) => stampFile(f, stamp, fix))));
+  };
+  const openCamera = () => (stamp && live ? setCameraOpen(true) : cameraInput.current?.click());
 
   const cameraOk = camera ?? allowsImages(accept);
-  const withCamera = cameraOk && touch;
+  const withCamera = cameraOk && (touch || Boolean(stamp && live));
   const how = touch ? (withCamera ? "Take a photo or choose from your gallery or files" : "Choose from your files") : `Drag ${multiple ? "files" : "a file"} here, paste a screenshot, or browse`;
   return (
     <div
@@ -170,7 +185,7 @@ export function FileDrop({
       className={cn("rounded-[var(--radius-ctl)] border border-dashed transition-colors duration-150", over ? "border-ink bg-hover" : "border-edge bg-canvas", compact ? "p-2.5" : "p-3.5", disabled && "opacity-60", className)}
     >
       <input ref={browseInput} type="file" accept={accept} multiple={multiple} className="sr-only" tabIndex={-1} aria-label={inputLabel ?? (multiple ? "Upload files" : "Upload a file")} onChange={pick} />
-      {cameraOk && <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-label="Take a photo" onChange={pick} />}
+      {cameraOk && <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-label="Take a photo" onChange={pickCamera} />}
       <div className={cn("flex gap-3", compact ? "flex-wrap items-center" : "flex-col sm:flex-row sm:items-center")}>
         {!compact && <CloudUpload className="size-6 shrink-0 text-ink-2 max-sm:hidden" strokeWidth={1.6} aria-hidden="true" />}
         <div className={cn("min-w-0 flex-1", compact && "min-w-[min(100%,15rem)]")}>
@@ -182,7 +197,7 @@ export function FileDrop({
         </div>
         <span className="flex shrink-0 flex-wrap gap-2">
           {withCamera && (
-            <Button size="sm" variant="primary" icon={Camera} busy={busy} disabled={disabled} onClick={() => cameraInput.current?.click()}>
+            <Button size="sm" variant="primary" icon={Camera} busy={busy} disabled={disabled} onClick={openCamera}>
               Take photo
             </Button>
           )}
@@ -197,6 +212,21 @@ export function FileDrop({
         </p>
       )}
       {children}
+      {cameraOpen && stamp && (
+        <ProofCamera
+          label={stamp}
+          max={multiple ? 10 : 1}
+          onClose={() => setCameraOpen(false)}
+          onDone={(files) => {
+            setCameraOpen(false);
+            take(files);
+          }}
+          onFallback={() => {
+            setCameraOpen(false);
+            cameraInput.current?.click();
+          }}
+        />
+      )}
     </div>
   );
 }

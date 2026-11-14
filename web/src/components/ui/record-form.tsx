@@ -6,7 +6,8 @@ import { api, invalidate, useApi, type ApiError } from "@/lib/api";
 import { Button, Field, Input, Segmented, Select, Textarea } from "./controls";
 import { Dialog, useToast } from "./feedback";
 import { DocumentReader, ReadBadge, VERIFY_BELOW, type ScanKind, type ScanResult } from "./document-reader";
-import { PendingPhotos, shrink, uploadPhoto, type PhotoOwner } from "./photos";
+import { PendingPhotos, uploadPhoto, type PhotoOwner } from "./photos";
+import { uploadProof } from "./proof-list";
 import { PeoplePicker, type PersonDraft } from "@/components/requests/people-picker";
 import { cn } from "@/lib/cn";
 
@@ -224,8 +225,11 @@ export function RecordDialog({
   scan?: { kind: ScanKind; attachTo?: string; ownerId?: number };
   /** Lets the user take or pick photos of the new item; uploaded after it is saved (onSubmit must return it). */
   photos?: PhotoOwner;
-  /** Optional proof-of-receipt photos (camera or gallery), added to the stock movement the save returns. */
-  proof?: { movementId: (saved: unknown) => number | null | undefined; when?: (values: Values) => boolean };
+  /**
+   * Optional photo proof of the transaction the save creates: the camera stamps date, time and location.
+   * `url` gets the saved result and returns where to send the photos.
+   */
+  proof?: { url: (saved: unknown) => string | null | undefined; when?: (values: Values) => boolean; title?: string; note?: string; label?: string };
 }) {
   const toast = useToast();
   const [values, setValues] = useState<Values>(initial ?? {});
@@ -276,13 +280,11 @@ export function RecordDialog({
         invalidate();
       }
       const showProof = proof && (!proof.when || proof.when(values));
-      const movement = showProof && proofs.length ? proof.movementId(saved) : null;
-      if (movement) {
+      const target = showProof && proofs.length ? proof.url(saved) : null;
+      if (target) {
         let added = 0;
         for (const f of proofs) {
-          const fd = new FormData();
-          fd.set("file", await shrink(f));
-          await api(`/api/v1/inventory/movements/${movement}/proof`, { method: "POST", body: fd })
+          await uploadProof(target, f)
             .then(() => added++)
             .catch((e: ApiError) => toast(`Saved, but a proof photo was not added: ${e.message}`, "error"));
         }
@@ -349,7 +351,7 @@ export function RecordDialog({
       />
       {proof && (!proof.when || proof.when(values)) && (
         <div className="mt-5 [&>div]:mb-0">
-          <PendingPhotos files={proofs} onChange={setProofs} max={4} title="Proof of receipt" note="optional · the delivery, DR or receipt" showMain={false} />
+          <PendingPhotos files={proofs} onChange={setProofs} max={6} title={proof.title ?? "Photo proof"} note={proof.note ?? "optional · date, time and location are stamped on camera photos"} showMain={false} stamp={proof.label ?? title} />
         </div>
       )}
       {message && (

@@ -155,12 +155,16 @@ export function Viewer({ photos, index, onIndex, onClose, canEdit, onChanged }: 
   const go = (d: number) => onIndex((index + d + photos.length) % photos.length);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // Caught first, so Escape closes only the photo, not a window behind it.
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
       if (e.key === "ArrowRight") onIndex((index + 1) % photos.length);
       if (e.key === "ArrowLeft") onIndex((index - 1 + photos.length) % photos.length);
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [index, photos.length, onClose, onIndex]);
 
   async function act(kind: "main" | "remove") {
@@ -229,7 +233,7 @@ export function Viewer({ photos, index, onIndex, onClose, canEdit, onChanged }: 
 }
 
 /** Photos chosen while creating a record; they are uploaded once the record is saved. */
-export function PendingPhotos({ files, onChange, max = MAX, note = "what the item looks like", title = "Photos", showMain = true }: { files: File[]; onChange: (f: File[]) => void; max?: number; note?: string; title?: string; showMain?: boolean }) {
+export function PendingPhotos({ files, onChange, max = MAX, note = "what the item looks like", title = "Photos", showMain = true, stamp }: { files: File[]; onChange: (f: File[]) => void; max?: number; note?: string; title?: string; showMain?: boolean; stamp?: string }) {
   const [urls, setUrls] = useState<string[]>([]);
   useEffect(() => {
     const u = files.map((f) => URL.createObjectURL(f));
@@ -242,6 +246,7 @@ export function PendingPhotos({ files, onChange, max = MAX, note = "what the ite
       accept={ACCEPT_IMAGES}
       className="mb-5"
       inputLabel="Upload photos"
+      stamp={stamp}
       disabled={files.length >= max}
       title={
         <>

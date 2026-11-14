@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import auth
 from .config import get_settings
 from .db import create_schema, get_engine, session_factory
+from . import proofs
 from .routers import admin, approvals, assets, attachments, compliance, contracts_banking, documents, fleet, health, intake, inventory, io, photos, reports, requests, scan, session, tasks, travel
 from .workflow import run_escalations
 
@@ -109,7 +110,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth.router)
-for r in (health, session, requests, attachments, approvals, tasks, admin, assets, inventory, fleet, compliance, travel, io, reports, documents, scan, photos, intake):
+for r in (health, session, requests, attachments, approvals, tasks, admin, assets, inventory, fleet, compliance, travel, io, reports, documents, scan, photos, intake, proofs):
     app.include_router(r.router)
 app.include_router(contracts_banking.contracts)
 app.include_router(contracts_banking.banking)
