@@ -34,7 +34,7 @@ import { DataTools } from "@/components/io/data-tools";
 import { DocumentsPanel } from "@/components/documents/documents";
 import { peso } from "@/components/fleet/fleet";
 import { useRouter } from "next/navigation";
-import { ItemThumb, PhotoGallery } from "@/components/ui/photos";
+import { ItemThumb, PhotoGallery, Viewer } from "@/components/ui/photos";
 import { cn } from "@/lib/cn";
 
 type Item = {
@@ -62,7 +62,8 @@ type Item = {
   low: boolean;
   version: number;
 };
-type Move = { id: number; reference: string; kind: string; quantity: number; balance_after: number; issued_to: Person | null; reason: string | null; actor: Person; at: string; request_id: number | null; item?: { id: number; item_code: string; name: string; location: string; unit: string } };
+type Proof = { id: number; thumb: string; full: string };
+type Move = { id: number; proofs?: Proof[]; reference: string; kind: string; quantity: number; balance_after: number; issued_to: Person | null; reason: string | null; actor: Person; at: string; request_id: number | null; item?: { id: number; item_code: string; name: string; location: string; unit: string } };
 type ItemDetail = Item & { movements: Move[]; reservations: { id: number; quantity: number; request: { id: number; reference: string; subject: string; requester: Person } }[]; other_locations: { id: number; location: string; on_hand: number; available: number }[]; can_adjust: boolean; can_write_off: boolean };
 type Options = { categories: string[]; locations: string[]; can_adjust: boolean; can_write_off: boolean };
 
@@ -143,6 +144,7 @@ export function InventoryPage() {
         initial={{ category: "Consumables", unit: "pc", opening_quantity: "0", reorder_level: "0", serialized_on_issue: "false" }}
         submitLabel="Add item"
         photos="inventory_item"
+        proof={{ movementId: (s) => (s as { opening_movement_id?: number | null })?.opening_movement_id, when: (v) => Number(v.opening_quantity || 0) > 0 }}
         onSubmit={async (p) => {
           const i = await post<Item>("/api/v1/inventory/items", normalize(p));
           toast(`Added · ${i.item_code} at ${i.location}`);
@@ -505,6 +507,8 @@ function MovesView() {
 
 function MoveRow({ m, showItem }: { m: Move; showItem?: boolean }) {
   const I = KIND_ICON[m.kind] ?? ArrowLeftRight;
+  const [viewing, setViewing] = useState<number | null>(null);
+  const proofs = m.proofs ?? [];
   return (
     <li className="flex items-start gap-3 px-4 py-3 sm:px-5">
       <I className="mt-0.5 size-[18px] shrink-0 text-ink-3" strokeWidth={1.75} aria-hidden="true" />
@@ -523,7 +527,21 @@ function MoveRow({ m, showItem }: { m: Move; showItem?: boolean }) {
           {m.issued_to ? ` · to ${m.issued_to.name}` : ""}
           {m.reason ? ` · ${m.reason}` : ""}
         </span>
+        {proofs.length > 0 && (
+          <span className="mt-2 flex flex-wrap items-center gap-1.5">
+            {proofs.map((p, n) => (
+              <button key={p.id} type="button" onClick={() => setViewing(n)} aria-label={`Open proof of receipt ${n + 1}`} className="block overflow-hidden rounded-[6px] border border-line">
+                {/* eslint-disable-next-line @next/next/no-img-element -- private API image */}
+                <img src={p.thumb} alt="" loading="lazy" className="size-11 object-cover" />
+              </button>
+            ))}
+            <span className="text-[11.5px] text-ink-3">Proof of receipt</span>
+          </span>
+        )}
       </span>
+      {viewing !== null && proofs[viewing] && (
+        <Viewer photos={proofs.map((p) => ({ ...p, main: false }))} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} canEdit={false} onChanged={() => undefined} />
+      )}
       <span className="shrink-0 text-right">
         <span className={cn("tabular block text-[14px] font-bold", m.quantity < 0 && "text-ink-2")}>{m.quantity > 0 ? `+${m.quantity}` : m.quantity}</span>
         <span className="tabular block text-[11.5px] text-ink-3">bal. {m.balance_after}</span>
@@ -683,11 +701,13 @@ export function StockItemView({ id }: { id: number }) {
         fields={spec?.fields ?? []}
         initial={dialog === "adjustment" ? { direction: "add" } : undefined}
         submitLabel={spec?.label}
+        proof={dialog === "stock_in" || dialog === "return" ? { movementId: (s) => (s as ItemDetail).movements[0]?.id } : undefined}
         onSubmit={async (p) => {
           const res = await post<ItemDetail>(`/api/v1/inventory/items/${i.id}/move`, { ...p, kind: dialog });
           q.setData(res);
           toast(`${spec!.label} · ${res.on_hand} ${res.unit} on hand`);
           invalidate();
+          return res;
         }}
       />
       <RecordDialog

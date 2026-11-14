@@ -90,6 +90,9 @@ class Asset(Base):
     issued_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     date_issued: Mapped[date | None] = mapped_column(Date)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Items handed to the same person together share one issuance reference (EA-ISS-…):
+    # one acknowledgement and one issuance form for the whole set.
+    issue_ref: Mapped[str | None] = mapped_column(String(32), index=True)
     purchase_date: Mapped[date | None] = mapped_column(Date)
     purchase_reference: Mapped[str | None] = mapped_column(String(120))
     description: Mapped[str | None] = mapped_column(Text)

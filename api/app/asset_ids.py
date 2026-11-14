@@ -73,3 +73,21 @@ async def backfill_serials(session) -> int:
     if rows:
         await session.commit()
     return len(rows)
+
+
+async def backfill_issue_refs(session) -> int:
+    """Items issued before issuance references existed: the same item handed to the same person on the
+    same day becomes one issuance, so it shows as one entry and is acknowledged once."""
+    from .core import next_reference
+
+    rows = (await session.execute(select(Asset).where(Asset.holder_id.is_not(None), Asset.issue_ref.is_(None)).order_by(Asset.id))).scalars().all()
+    groups: dict[tuple, list[Asset]] = {}
+    for a in rows:
+        groups.setdefault((a.company_id, a.holder_id, a.name.strip().lower(), a.category, a.date_issued), []).append(a)
+    for items in groups.values():
+        ref = await next_reference(session, "ISS")
+        for a in items:
+            a.issue_ref = ref
+    if rows:
+        await session.commit()
+    return len(groups)

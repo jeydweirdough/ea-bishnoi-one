@@ -50,6 +50,10 @@ async def lifespan(app: FastAPI):
 
         if n := await backfill_serials(s):
             log.info("gave %d existing assets an automatic serial number", n)
+        from .asset_ids import backfill_issue_refs
+
+        if n := await backfill_issue_refs(s):
+            log.info("grouped earlier issued assets into %d issuances", n)
     if settings.escalation_interval_s > 0:
         task = asyncio.create_task(_escalation_loop(settings.escalation_interval_s))
         # Load the OCR models in the background so the first document upload reads in seconds.

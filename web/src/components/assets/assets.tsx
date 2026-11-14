@@ -18,6 +18,7 @@ import {
   UserCheck,
   UserPlus,
   Wrench,
+  ChevronDown,
   ChevronRight,
   Paperclip,
   Download,
@@ -33,6 +34,7 @@ import { DataTools } from "@/components/io/data-tools";
 import { DocumentsPanel } from "@/components/documents/documents";
 import { useShell } from "@/components/shell/shell-context";
 import { ItemThumb, PhotoGallery } from "@/components/ui/photos";
+import { FileDrop } from "@/components/ui/file-drop";
 import { cn } from "@/lib/cn";
 
 /* ---------------------------------------------------------------- types */
@@ -59,6 +61,10 @@ export type Asset = {
   date_issued: string | null;
   acknowledged_at: string | null;
   awaiting_acknowledgement: boolean;
+  /** Items handed to one person together share this (EA-ISS-…). */
+  issue_ref: string | null;
+  /** Registry, grouped: the identical items this entry stands for. */
+  group?: { count: number; members: { id: number; reference: string; serial_number: string | null; acknowledged: boolean }[] };
   purchase_date: string | null;
   purchase_reference: string | null;
   description: string | null;
@@ -83,7 +89,8 @@ type Repair = {
   opened_at: string;
   completed_at: string | null;
 };
-type AssetDetail = Asset & { events: AssetEvent[]; repairs: Repair[]; attachments: Attachment[]; actions: string[] };
+type Together = { id: number; reference: string; name: string; serial_number: string | null; acknowledged: boolean };
+type AssetDetail = Asset & { events: AssetEvent[]; repairs: Repair[]; attachments: Attachment[]; actions: string[]; issued_together: Together[]; identical_in_stock: number };
 type AssetPage = Page<Asset> & { summary: Record<string, number> };
 
 /* ---------------------------------------------------------------- vocabulary */
@@ -158,15 +165,33 @@ function serialList(v: unknown): string[] {
 /* ---------------------------------------------------------------- shared rows */
 
 function AssetRow({ a, extra }: { a: Asset; extra?: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const g = a.group;
+  const first = g?.members[0];
+  const last = g?.members[g.members.length - 1];
   return (
     <li>
       <Link href={`/asset/${a.id}`} className="group flex items-start gap-3.5 px-4 py-3.5 transition-colors duration-150 hover:bg-canvas sm:items-center sm:gap-4 sm:px-5">
         <ItemThumb src={a.photo} icon={Package} className="mt-0.5 sm:mt-0" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-bold leading-snug">{a.name}</span>
+          <span className="flex items-center gap-2">
+            <span className="truncate text-[15px] font-bold leading-snug">{a.name}</span>
+            {g && <span className="tabular shrink-0 rounded-full bg-ink px-2 py-px text-[12px] font-bold text-white">× {g.count}</span>}
+          </span>
           <span className="mt-0.5 flex flex-wrap gap-x-2 text-[12.5px] text-ink-3">
-            <span className="tabular">{a.reference}</span>
-            {a.serial_number && <span className="tabular">SN {a.serial_number}</span>}
+            {g ? (
+              <>
+                {a.holder && a.issue_ref && <span className="tabular">{a.issue_ref}</span>}
+                <span className="tabular">
+                  SN {first?.serial_number} to {last?.serial_number}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="tabular">{a.reference}</span>
+                {a.serial_number && <span className="tabular">SN {a.serial_number}</span>}
+              </>
+            )}
             <span>{a.category}</span>
           </span>
           <span className="mt-0.5 block text-[12.5px] text-ink-2">{a.holder ? `With ${a.holder.name}` : a.location ? `At ${a.location}` : "Not issued"}</span>
@@ -180,6 +205,28 @@ function AssetRow({ a, extra }: { a: Asset; extra?: React.ReactNode }) {
         </span>
         <ChevronRight className="mt-3 size-4 shrink-0 text-mute group-hover:text-ink sm:mt-0" strokeWidth={1.75} aria-hidden="true" />
       </Link>
+      {g && (
+        <div className="px-4 pb-3 pl-[76px] sm:px-5 sm:pl-[84px]">
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-ctl)] px-1 text-[13px] font-medium text-ink-2 hover:text-ink">
+            <ChevronDown className={cn("size-4 transition-transform duration-200", open && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+            {open ? "Hide" : "Show"} the {g.count} items
+          </button>
+          {open && (
+            <ul className="mt-1 divide-y divide-line rounded-[var(--radius-ctl)] border border-line bg-sheet">
+              {g.members.map((m) => (
+                <li key={m.id}>
+                  <Link href={`/asset/${m.id}`} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px] hover:bg-canvas">
+                    <span className="tabular min-w-0 truncate">
+                      <span className="font-medium">SN {m.serial_number}</span> <span className="text-ink-3">· {m.reference}</span>
+                    </span>
+                    {a.holder && <span className="shrink-0 text-[12px] text-ink-3">{m.acknowledged ? "Acknowledged" : "Not yet acknowledged"}</span>}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </li>
   );
 }
@@ -222,7 +269,7 @@ export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) 
   const [status, setStatus] = useState<string | undefined>(view);
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
-  const data = useApi<AssetPage>(`/api/v1/assets${qs({ q: term, status: status && status !== "unacknowledged" ? [status] : undefined, holder: status === "unacknowledged" ? status : undefined, page, page_size: 25 })}`);
+  const data = useApi<AssetPage>(`/api/v1/assets${qs({ q: term, status: status && status !== "unacknowledged" ? [status] : undefined, holder: status === "unacknowledged" ? status : undefined, grouped: true, page, page_size: 25 })}`);
   const s = data.data?.summary;
   return (
     <ModuleShell
@@ -272,7 +319,7 @@ export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) 
             <>
               <ul className="divide-y divide-line">
                 {data.data.items.map((a) => (
-                  <AssetRow key={a.id} a={a} />
+                  <AssetRow key={`${a.id}-${a.group?.count ?? 1}`} a={a} />
                 ))}
               </ul>
               <Pager page={page} pageSize={25} total={data.data.total} onPage={setPage} />
@@ -601,13 +648,18 @@ export function AssetDetailView({ id }: { id: number }) {
   if (!a) return <PageFrame><SkeletonRows /></PageFrame>;
   const staff = Boolean(me && me.role !== "employee");
   const has = (k: string) => a.actions.includes(k);
+  const n = a.issued_together.length;
 
   const specs: Record<ActionKey, { title: string; label: string; fields: FieldDef[]; url: string; method?: string; done: string; initial?: Record<string, string> }> = {
     edit: { title: "Edit asset", label: "Save", fields: ASSET_FIELDS, url: `/api/v1/assets/${a.id}`, method: "PATCH", done: "Saved", initial: fromRecord(ASSET_FIELDS, a as unknown as Record<string, unknown>) },
     assign: {
-      title: "Issue this asset", label: "Issue", url: `/api/v1/assets/${a.id}/assign`, done: "Issued",
+      title: a.identical_in_stock ? `Issue ${a.name}` : "Issue this asset", label: "Issue", url: `/api/v1/assets/${a.id}/assign`, done: "Issued",
+      initial: { count: "1" },
       fields: [
         { name: "employee_id", label: "Issue to", type: "person", required: true, placeholder: "Choose a person" },
+        ...(a.identical_in_stock
+          ? [{ name: "count", label: "How many?", type: "number", required: true, hint: `${a.identical_in_stock + 1} in stock. Issued together: one acknowledgement and one issuance form.` } as FieldDef]
+          : []),
         { name: "date_issued", label: "Date issued", type: "date", half: true, more: true },
         { name: "condition", label: "Condition at issue", type: "select", options: CONDITIONS, half: true, more: true },
         { name: "note", label: "Note", type: "textarea", more: true },
@@ -649,8 +701,9 @@ export function AssetDetailView({ id }: { id: number }) {
   async function acknowledge() {
     setBusy(true);
     try {
-      q.setData(await post<AssetDetail>(`/api/v1/assets/${a!.id}/acknowledge`));
-      toast("Receipt acknowledged");
+      const res = await post<AssetDetail>(`/api/v1/assets/${a!.id}/acknowledge`);
+      q.setData(res);
+      toast(res.issued_together.length > 1 ? `${res.issued_together.length} items acknowledged` : "Receipt acknowledged");
       invalidate();
     } catch (e) {
       toast((e as ApiError).message, "error");
@@ -682,7 +735,7 @@ export function AssetDetailView({ id }: { id: number }) {
           <p className="text-[15px] font-bold">{has("acknowledge") ? "Receipt confirmation" : a.holder ? `Issued to ${a.holder.name}` : a.status === "under_repair" ? "Out for repair" : "In stock"}</p>
           <p className="mt-1 text-[14px] text-ink-2">
             {has("acknowledge")
-              ? `${a.issued_by?.name ?? "Executive Admin"} issued it to you on ${fmtDate(a.date_issued)}.`
+              ? `${a.issued_by?.name ?? "Executive Admin"} issued ${n > 1 ? `${n} of these` : "it"} to you on ${fmtDate(a.date_issued)}.`
               : a.holder
                 ? a.acknowledged_at
                   ? `Acknowledged ${fmtDate(a.acknowledged_at)}.`
@@ -694,7 +747,7 @@ export function AssetDetailView({ id }: { id: number }) {
           <div className="mt-4 flex flex-wrap gap-2">
             {has("acknowledge") && (
               <Button variant="primary" icon={CircleCheck} busy={busy} onClick={acknowledge}>
-                Acknowledge receipt
+                {n > 1 ? `Acknowledge all ${n}` : "Acknowledge receipt"}
               </Button>
             )}
             {primary
@@ -725,6 +778,22 @@ export function AssetDetailView({ id }: { id: number }) {
           <PhotoGallery ownerType="asset" ownerId={a.id} canEdit={staff} />
         </div>
         <div className="flex min-w-0 flex-col gap-5 lg:col-start-1 lg:row-span-2 lg:row-start-1">
+          {n > 1 && (
+            <Panel title={`Issued together · ${a.issue_ref}`} meta={`${n}`}>
+              <ul className="divide-y divide-line">
+                {a.issued_together.map((x) => (
+                  <li key={x.id}>
+                    <Link href={`/asset/${x.id}`} className={cn("flex items-center justify-between gap-3 px-4 py-2.5 text-[13.5px] hover:bg-canvas sm:px-5", x.id === a.id && "bg-canvas")}>
+                      <span className="tabular min-w-0 truncate">
+                        <span className="font-medium">SN {x.serial_number}</span> <span className="text-ink-3">· {x.reference}</span>
+                      </span>
+                      <span className="shrink-0 text-[12.5px] text-ink-3">{x.acknowledged ? "Acknowledged" : "Not yet acknowledged"}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
           <Panel title="History">
             <ol className="px-4 py-4 sm:px-5">
               {a.events.map((e, i) => (
@@ -816,7 +885,8 @@ export function AssetDetailView({ id }: { id: number }) {
           const res = await api<AssetDetail | Repair>(spec!.url, { method: spec!.method ?? "POST", json: body });
           if ("actions" in res) q.setData(res);
           else q.reload();
-          toast(`${spec!.done} · ${a.reference}`);
+          const n = "issued_together" in res ? res.issued_together.length : 0;
+          toast(dialog === "assign" && n > 1 && "issue_ref" in res ? `Issued ${n} items · ${res.issue_ref}` : `${spec!.done} · ${a.reference}`);
           invalidate();
         }}
       />
@@ -843,7 +913,7 @@ export function RecordAttachments({ ownerType, ownerId, items, canAdd, onChange 
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   if (!items.length && !canAdd) return null;
-  async function upload(files: FileList | null) {
+  async function upload(files: FileList | File[] | null) {
     if (!files?.length) return;
     setBusy(true);
     for (const f of Array.from(files)) {
@@ -878,11 +948,7 @@ export function RecordAttachments({ ownerType, ownerId, items, canAdd, onChange 
       )}
       {canAdd && (
         <div className={cn("p-3 sm:px-5", items.length > 0 && "border-t border-line")}>
-          <label className={cn(buttonClass("ghost", "sm"), "cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent/60")}>
-            <Paperclip className="size-4" strokeWidth={1.75} aria-hidden="true" />
-            {busy ? "Uploading…" : "Add a file"}
-            <input type="file" multiple className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.docx,.xlsx,.csv,.txt" onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />
-          </label>
+          <FileDrop compact busy={busy} onFiles={(f) => upload(f)} hint="PDF, image, Word, Excel or text" />
         </div>
       )}
     </Panel>
@@ -890,6 +956,23 @@ export function RecordAttachments({ ownerType, ownerId, items, canAdd, onChange 
 }
 
 /* ---------------------------------------------------------------- employee: my assets */
+
+/** Items issued together show (and are acknowledged) as one entry. */
+function bundle(list: Asset[]) {
+  const out: { a: Asset; count: number }[] = [];
+  const seen = new Map<string, { a: Asset; count: number }>();
+  for (const a of list) {
+    const key = a.issue_ref ? `${a.issue_ref}|${a.awaiting_acknowledgement}` : `one-${a.id}`;
+    const hit = seen.get(key);
+    if (hit) hit.count++;
+    else {
+      const e = { a, count: 1 };
+      seen.set(key, e);
+      out.push(e);
+    }
+  }
+  return out;
+}
 
 export function MyAssets() {
   const toast = useToast();
@@ -907,15 +990,18 @@ export function MyAssets() {
             <EmptyState icon={Package} title="No assets issued to you" compact />
           ) : (
             <ul className="divide-y divide-line">
-              {q.data.map((a) => (
+              {bundle(q.data).map(({ a, count }) => (
                 <li key={a.id} className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:px-5">
                   <Link href={`/asset/${a.id}`} className="flex min-w-0 flex-1 items-start gap-3.5">
                     <ItemThumb src={a.photo} icon={Package} size="lg" />
                     <span className="min-w-0">
-                      <span className="block truncate text-[15px] font-bold">{a.name}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-[15px] font-bold">{a.name}</span>
+                        {count > 1 && <span className="tabular shrink-0 rounded-full bg-ink px-2 py-px text-[12px] font-bold text-white">× {count}</span>}
+                      </span>
                       <span className="block text-[12.5px] text-ink-3">
-                        <span className="tabular">{a.reference}</span>
-                        {a.serial_number ? ` · SN ${a.serial_number}` : ""} · issued {fmtDate(a.date_issued)}
+                        <span className="tabular">{count > 1 ? a.issue_ref : a.reference}</span>
+                        {count === 1 && a.serial_number ? ` · SN ${a.serial_number}` : ""} · issued {fmtDate(a.date_issued)}
                       </span>
                     </span>
                   </Link>
@@ -927,7 +1013,7 @@ export function MyAssets() {
                       onClick={async () => {
                         try {
                           await post(`/api/v1/assets/${a.id}/acknowledge`);
-                          toast("Receipt acknowledged");
+                          toast(count > 1 ? `${count} items acknowledged` : "Receipt acknowledged");
                           invalidate();
                         } catch (e) {
                           toast((e as ApiError).message, "error");
@@ -935,7 +1021,7 @@ export function MyAssets() {
                       }}
                       className="self-start sm:self-center"
                     >
-                      Acknowledge receipt
+                      {count > 1 ? `Acknowledge all ${count}` : "Acknowledge receipt"}
                     </Button>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-3">

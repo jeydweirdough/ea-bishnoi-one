@@ -52,6 +52,7 @@ def asset_out(a: Asset) -> dict:
         "issued_by": person(a.issued_by),
         "date_issued": day(a.date_issued),
         "acknowledged_at": iso(a.acknowledged_at),
+        "issue_ref": a.issue_ref,
         "awaiting_acknowledgement": bool(a.holder_id and not a.acknowledged_at),
         "purchase_date": day(a.purchase_date),
         "purchase_reference": a.purchase_reference,
@@ -157,6 +158,7 @@ async def list_assets(
     condition: list[str] = Query(default_factory=list),
     category: str | None = None,
     holder: Literal["any", "assigned", "unassigned", "unacknowledged"] = "any",
+    grouped: bool = False,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ) -> dict:
@@ -178,15 +180,35 @@ async def list_assets(
         stmt = stmt.outerjoin(Employee, Employee.id == Asset.holder_id).where(
             or_(Asset.reference.ilike(like), Asset.name.ilike(like), Asset.serial_number.ilike(like), Asset.brand.ilike(like), Asset.model.ilike(like), Employee.name.ilike(like))
         )
-    total = await count(session, stmt)
-    rows = (await session.execute(stmt.order_by(Asset.updated_at.desc(), Asset.id.desc()).offset((page - 1) * page_size).limit(page_size))).scalars()
+    order = (Asset.updated_at.desc(), Asset.id.desc())
+    if grouped:
+        # One entry per issuance (same items handed to one person together), and one per set of
+        # identical items not issued to anyone. Each entry lists its members.
+        groups: dict[tuple, list[Asset]] = {}
+        for a in (await session.execute(stmt.order_by(*order))).scalars():
+            key = ("issue", a.issue_ref) if a.holder_id and a.issue_ref else ("one", a.id) if a.holder_id else ("stock", a.company_id, a.name.strip().lower(), a.category, a.status, a.condition)
+            groups.setdefault(key, []).append(a)
+        entries = list(groups.values())
+        page_rows = entries[(page - 1) * page_size : page * page_size]
+        items = []
+        for g in page_rows:
+            g.sort(key=lambda x: x.id)
+            out = asset_out(g[0])
+            if len(g) > 1:
+                out["group"] = {"count": len(g), "members": [{"id": x.id, "reference": x.reference, "serial_number": x.serial_number, "acknowledged": bool(x.acknowledged_at)} for x in g]}
+            items.append(out)
+        total, rows = len(entries), None
+    else:
+        total = await count(session, stmt)
+        rows = (await session.execute(stmt.order_by(*order).offset((page - 1) * page_size).limit(page_size))).scalars()
+        items = [asset_out(a) for a in rows]
     summary = {}
     for st in AssetStatus:
         summary[st.value] = await count(session, select(Asset).where(Asset.company_id.in_(principal.company_ids), Asset.status == st))
     summary["unacknowledged"] = await count(
         session, select(Asset).where(Asset.company_id.in_(principal.company_ids), Asset.holder_id.is_not(None), Asset.acknowledged_at.is_(None))
     )
-    return {"items": [asset_out(a) for a in rows], "total": total, "page": page, "page_size": page_size, "summary": summary}
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "summary": summary}
 
 
 @router.post("/assets", status_code=201)
@@ -240,8 +262,16 @@ async def asset_detail(session, principal: Principal, a: Asset) -> dict:
                 actions.append("retire")
     if a.holder_id == principal.id and not a.acknowledged_at:
         actions.append("acknowledge")
+    together = []
+    if a.holder_id and a.issue_ref:
+        together = (await session.execute(select(Asset).where(Asset.issue_ref == a.issue_ref, Asset.holder_id == a.holder_id).order_by(Asset.id))).scalars().all()
+    spare = 0
+    if staff and not a.holder_id and a.status == AssetStatus.in_stock:
+        spare = await count(session, identical_in_stock(a))
     return {
         **asset_out(a),
+        "issued_together": [{"id": x.id, "reference": x.reference, "name": x.name, "serial_number": x.serial_number, "acknowledged": bool(x.acknowledged_at)} for x in together] if len(together) > 1 else [],
+        "identical_in_stock": spare,
         "events": [
             {"id": e.id, "type": e.type, "message": e.message, "actor": person(e.actor), "from_holder": person(e.from_holder), "to_holder": person(e.to_holder), "at": iso(e.at)}
             for e in events
@@ -296,6 +326,8 @@ async def update_asset(asset_id: int, body: AssetPatch, principal: Staff, sessio
 
 class AssignIn(BaseModel):
     employee_id: int
+    # Hand over this item and (count - 1) identical ones still in stock, as one issuance.
+    count: int = Field(1, ge=1, le=MAX_PER_REGISTRATION)
     date_issued: date | None = None
     condition: AssetCondition | None = None
     note: str | None = Field(None, max_length=2000)
@@ -323,6 +355,43 @@ class RepairIn(BaseModel):
     request_id: int | None = None
 
 
+def identical_in_stock(a: Asset):
+    """Other records of the same item, in stock and not issued: they can be handed over together."""
+    return select(Asset).where(
+        Asset.company_id == a.company_id, Asset.id != a.id, Asset.name == a.name, Asset.category == a.category,
+        Asset.status == AssetStatus.in_stock, Asset.holder_id.is_(None),
+    )
+
+
+async def issue_together(session, principal: Principal, assets: list[Asset], emp: Employee, *, when: date, condition=None, note: str | None = None) -> str:
+    """Hand one or more items to one person as a single issuance: one reference, one notification,
+    one acknowledgement and one issuance form for the set."""
+    ref = await next_reference(session, "ISS")
+    n = len(assets)
+    for a in assets:
+        a.holder_id = emp.id
+        a.issued_by_id = principal.id
+        a.date_issued = when
+        a.acknowledged_at = None
+        a.issue_ref = ref
+        a.status = AssetStatus.assigned
+        if condition:
+            a.condition = condition
+        if emp.department_id:
+            a.department_id = emp.department_id
+        a.version += 1
+        msg = note or f"Issued to {emp.name}"
+        await log(session, a, principal, "assigned", msg + (f" ({ref}, {n} items)" if n > 1 else f" ({ref})"), to=emp.id, data={"condition": a.condition, "issue_ref": ref, "items": n})
+    first = assets[0]
+    what = f"{first.name} × {n}" if n > 1 else first.name
+    serials = f"{assets[0].serial_number} to {assets[-1].serial_number}" if n > 1 else first.reference
+    await notify(
+        session, {emp.id}, kind="task_assignment", title=f"Please acknowledge: {what}",
+        body=f"{ref}: {serials} {'were' if n > 1 else 'was'} issued to you. Confirm you received {'them' if n > 1 else 'it'}.", link=f"/asset/{first.id}",
+    )
+    return ref
+
+
 @router.post("/assets/{asset_id}/assign")
 async def assign(asset_id: int, body: AssignIn, principal: Staff, session: Session) -> dict:
     a = await scoped(session, Asset, asset_id, principal)
@@ -333,21 +402,14 @@ async def assign(asset_id: int, body: AssignIn, principal: Staff, session: Sessi
     emp = await employee_in(session, body.employee_id, a.company_id, "employee_id")
     if body.date_issued and body.date_issued > date.today():
         raise bad_request({"message": "Issue date cannot be in the future", "fields": {"date_issued": "In the future"}})
-    a.holder_id = emp.id
-    a.issued_by_id = principal.id
-    a.date_issued = body.date_issued or date.today()
-    a.acknowledged_at = None
-    a.status = AssetStatus.assigned
-    if body.condition:
-        a.condition = body.condition
-    if emp.department_id:
-        a.department_id = emp.department_id
-    a.version += 1
-    await log(session, a, principal, "assigned", body.note or f"Issued to {emp.name}", to=emp.id, data={"condition": a.condition})
-    await notify(
-        session, {emp.id}, kind="task_assignment", title=f"Please acknowledge: {a.name}",
-        body=f"{a.reference} was issued to you. Confirm you received it.", link=f"/asset/{a.id}",
-    )
+    items = [a]
+    if body.count > 1:
+        others = (await session.execute(identical_in_stock(a).order_by(Asset.id).limit(body.count - 1))).scalars().all()
+        if len(others) < body.count - 1:
+            have = len(others) + 1
+            raise bad_request({"message": f"Only {have} of these {'is' if have == 1 else 'are'} in stock", "fields": {"count": f"At most {have}"}})
+        items += list(others)
+    await issue_together(session, principal, items, emp, when=body.date_issued or date.today(), condition=body.condition, note=body.note)
     await session.commit()
     return await asset_detail(session, principal, await scoped(session, Asset, a.id, principal))
 
@@ -359,11 +421,18 @@ async def acknowledge(asset_id: int, principal: CurrentPrincipal, session: Sessi
         raise forbidden("Only the person holding this asset can acknowledge it")
     if a.acknowledged_at:
         raise conflict("Already acknowledged")
-    a.acknowledged_at = now()
-    a.version += 1
-    await log(session, a, principal, "acknowledged", "Receipt acknowledged by holder")
+    # Everything handed over together is acknowledged together.
+    items = [a]
+    if a.issue_ref:
+        items = (await session.execute(select(Asset).where(Asset.issue_ref == a.issue_ref, Asset.holder_id == principal.id, Asset.acknowledged_at.is_(None)).order_by(Asset.id))).scalars().all()
+    at = now()
+    for x in items:
+        x.acknowledged_at = at
+        x.version += 1
+        await log(session, x, principal, "acknowledged", "Receipt acknowledged by holder" + (f" ({a.issue_ref}, {len(items)} items)" if len(items) > 1 else ""))
     if a.issued_by_id:
-        await notify(session, {a.issued_by_id}, kind="fulfillment_confirmation", title=f"Acknowledged: {a.name}", body=f"{principal.employee.name} confirmed receipt of {a.reference}.", link=f"/asset/{a.id}")
+        what = f"{a.name} × {len(items)}" if len(items) > 1 else a.name
+        await notify(session, {a.issued_by_id}, kind="fulfillment_confirmation", title=f"Acknowledged: {what}", body=f"{principal.employee.name} confirmed receipt of {a.issue_ref or a.reference}.", link=f"/asset/{a.id}")
     await session.commit()
     return await asset_detail(session, principal, await load_asset_for(session, principal, a.id))
 
@@ -377,6 +446,7 @@ async def return_asset(asset_id: int, body: ReturnIn, principal: Staff, session:
     a.holder_id = None
     a.acknowledged_at = None
     a.date_issued = None
+    a.issue_ref = None
     a.condition = body.condition
     a.status = AssetStatus.in_stock
     a.version += 1
@@ -402,6 +472,7 @@ async def transfer(asset_id: int, body: TransferIn, principal: Staff, session: S
         a.issued_by_id = principal.id
         a.date_issued = date.today()
         a.acknowledged_at = None
+        a.issue_ref = await next_reference(session, "ISS")
         a.status = AssetStatus.assigned
         if emp.department_id and body.department_id is None:
             a.department_id = emp.department_id

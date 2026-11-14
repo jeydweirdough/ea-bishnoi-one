@@ -185,12 +185,24 @@ def b_asset_movement(kind: str):
         holder = a.holder
         info = [("Issued to" if kind != "return" else "Returned by", (holder.name if holder else (ev.from_holder.name if ev and ev.from_holder else "—"))), ("Department", a.department.name if a.department else "—"), ("Date", aware(ev.at).date() if ev else date.today()), ("Event", ev.message if ev else "—")]
         secs = [("info", "Asset", asset_pairs(a))]
+        many = False
+        if kind in ("issuance", "turnover") and a.holder_id and a.issue_ref:
+            # Handed over together: one form lists every item in the issuance.
+            together = (await s.execute(select(Asset).where(Asset.issue_ref == a.issue_ref, Asset.holder_id == a.holder_id).order_by(Asset.id))).scalars().all()
+            if len(together) > 1:
+                info.insert(0, ("Issuance", a.issue_ref))
+                rows = [{"n": i + 1, "ref": x.reference, "item": x.name, "serial": x.serial_number or "—", "cond": (x.condition or "").replace("_", " ").capitalize()} for i, x in enumerate(together)]
+                cols = [Column("n", "#", "number", 0.4), Column("ref", "Asset", "text", 1.6), Column("item", "Item", "text", 2.4), Column("serial", "Serial number", "text", 1.8), Column("cond", "Condition", "text", 1.1)]
+                secs = [("table", f"Items issued ({len(together)})", cols, rows, None)]
+                many = True
         cert = {
             "issuance": "I acknowledge receipt of the asset described above in the stated condition. I will use it for company purposes, take reasonable care of it, report damage or loss promptly, and return it on request.",
             "transfer": "The asset above was transferred as recorded. The receiving person accepts responsibility for it from the date of transfer.",
             "return": "The asset above was returned to Executive Admin in the condition stated.",
             "turnover": "I confirm the turnover of the asset above and accept accountability for its care and return.",
         }[kind]
+        if many:
+            cert = cert.replace("the asset described above", "the items listed above").replace("the asset above", "the items above").replace("use it", "use them").replace("care of it", "care of them").replace("return it", "return them")
         ack = f"Acknowledged in Executive Admin {fmt(aware(a.acknowledged_at))}" if a.acknowledged_at and kind in ("issuance", "turnover") else None
         sigs = [Signature("Issued by" if kind != "return" else "Received by", (a.issued_by.name if a.issued_by and kind != "return" else p.employee.name), None, "Executive Admin"), Signature("Received by" if kind != "return" else "Returned by", holder.name if holder and kind != "return" else (ev.from_holder.name if ev and ev.from_holder else None), holder.designation if holder and kind != "return" else None, None, ack)]
         return base(t, a.company, reference=a.reference, status_label="Issued" if ev else "Draft", info=info, sections=secs, certification=cert, signatures=sigs), "approved" if ev else "draft"

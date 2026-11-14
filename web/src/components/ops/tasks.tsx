@@ -6,6 +6,7 @@ import { fmtDate, invalidate, post, api, qs, useApi, type ApiError, type Page, t
 import { iconForHref } from "@/components/icons";
 import { Breadcrumbs, PageFrame, PageHeader } from "@/components/page/module-page";
 import { Button, Chip, Field, Input, Segmented, Select, Textarea } from "@/components/ui/controls";
+import { ACCEPT_DOCS, ChosenFile, FileDrop } from "@/components/ui/file-drop";
 import { Dialog, EmptyState, ErrorState, Pager, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { PRIORITY_LABEL, PriorityLabel } from "@/components/ui/status";
 import { PeoplePicker } from "@/components/requests/people-picker";
@@ -292,9 +293,9 @@ function CompleteDialog({ task, onClose }: { task: Task | null; onClose: () => v
         <Field label="What was done?" required htmlFor="c-note" error={err}>
           <Textarea id="c-note" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
         </Field>
-        <Field label="Evidence (optional)" htmlFor="c-file" hint="PDF, image, Word, Excel or text, up to 10 MB">
-          <Input id="c-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.docx,.xlsx,.csv,.txt" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="pt-2" />
-        </Field>
+        <FileDrop accept={ACCEPT_DOCS} multiple={false} title="Evidence (optional)" hint="PDF, image, Word, Excel or text, up to 10 MB" inputLabel="Evidence (optional)" onFiles={(f) => setFile(f[0])}>
+          {file && <ChosenFile file={file} onRemove={() => setFile(null)} />}
+        </FileDrop>
       </div>
     </Dialog>
   );

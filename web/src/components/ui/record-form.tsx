@@ -6,7 +6,7 @@ import { api, invalidate, useApi, type ApiError } from "@/lib/api";
 import { Button, Field, Input, Select, Textarea } from "./controls";
 import { Dialog, useToast } from "./feedback";
 import { DocumentReader, ReadBadge, VERIFY_BELOW, type ScanKind, type ScanResult } from "./document-reader";
-import { PendingPhotos, uploadPhoto, type PhotoOwner } from "./photos";
+import { PendingPhotos, shrink, uploadPhoto, type PhotoOwner } from "./photos";
 import { PeoplePicker, type PersonDraft } from "@/components/requests/people-picker";
 import { cn } from "@/lib/cn";
 
@@ -196,6 +196,7 @@ export function RecordDialog({
   onSubmit,
   scan,
   photos,
+  proof,
 }: {
   open: boolean;
   onClose: () => void;
@@ -208,11 +209,14 @@ export function RecordDialog({
   scan?: { kind: ScanKind; attachTo?: string; ownerId?: number };
   /** Lets the user take or pick photos of the new item; uploaded after it is saved (onSubmit must return it). */
   photos?: PhotoOwner;
+  /** Optional proof-of-receipt photos (camera or gallery), added to the stock movement the save returns. */
+  proof?: { movementId: (saved: unknown) => number | null | undefined; when?: (values: Values) => boolean };
 }) {
   const toast = useToast();
   const [values, setValues] = useState<Values>(initial ?? {});
   const [file, setFile] = useState<File | null>(null);
   const [pending, setPending] = useState<File[]>([]);
+  const [proofs, setProofs] = useState<File[]>([]);
   const [marks, setMarks] = useState<Record<string, "read" | "verify">>({});
   const [personDraft, setPersonDraft] = useState<PersonDraft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -224,6 +228,7 @@ export function RecordDialog({
       setValues(initial ?? {});
       setFile(null);
       setPending([]);
+      setProofs([]);
       setMarks({});
       setPersonDraft(null);
       setErrors({});
@@ -254,6 +259,19 @@ export function RecordDialog({
         const owners = saved.created?.length ? saved.created.slice(0, 20).map((c) => c.id) : [saved.id];
         for (const id of owners) for (const f of pending) await uploadPhoto(photos, id, f).catch((e: ApiError) => toast(`Saved, but a photo was not added: ${e.message}`, "error"));
         invalidate();
+      }
+      const showProof = proof && (!proof.when || proof.when(values));
+      const movement = showProof && proofs.length ? proof.movementId(saved) : null;
+      if (movement) {
+        let added = 0;
+        for (const f of proofs) {
+          const fd = new FormData();
+          fd.set("file", await shrink(f));
+          await api(`/api/v1/inventory/movements/${movement}/proof`, { method: "POST", body: fd })
+            .then(() => added++)
+            .catch((e: ApiError) => toast(`Saved, but a proof photo was not added: ${e.message}`, "error"));
+        }
+        if (added) invalidate();
       }
       onClose();
     } catch (e) {
@@ -314,6 +332,11 @@ export function RecordDialog({
           setValues(v);
         }}
       />
+      {proof && (!proof.when || proof.when(values)) && (
+        <div className="mt-5 [&>div]:mb-0">
+          <PendingPhotos files={proofs} onChange={setProofs} max={4} title="Proof of receipt" note="optional · the delivery, DR or receipt" showMain={false} />
+        </div>
+      )}
       {message && (
         <p role="alert" className="mt-4 text-[13.5px] text-danger">
           {message}

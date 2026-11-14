@@ -562,10 +562,17 @@ Sidebar: Assets, Fleet, Compliance and Travel now sit under a **Registers** head
   - Register asset asks "How many?". Five chairs become five records, each with its own serial, so each one can be issued, returned and repaired on its own.
   - Typed serials are used first, in order; the rest are numbered automatically.
   - Receiving Proof and Excel import work the same way.
+- **Issuing several of the same item as one issuance.**
+  - Issue asks "How many?" when identical items are in stock. Five clips to one person become one issuance (`EA-ISS-…`): one notification, one "Acknowledge all 5", and one Asset Issuance Form listing every serial.
+  - The registry shows one row per issuance (e.g. "Paper clip box × 5", SN range) and one per set of identical items in stock; each row expands to its serials. Each item is still its own record, so one can be returned or repaired on its own.
+  - Items issued one at a time before this change were grouped on start by person, item and day.
+  - Serialized stock issued from Consumables & Stock is one issuance too.
+- **One way to add files everywhere.** Every upload (photos, proof of receipt, request attachments, asset and request files, task evidence, signed copies, Excel import, document reading) uses the same box: drag and drop, paste a screenshot (Ctrl+V), Browse (gallery on a phone, file explorer on a computer), and Take photo on phones. Wrong file types are refused with a message.
 - **Consumables & Stock** (formerly Equipment Inventory). This is where anything counted by quantity lives: bond paper, toner, coffee, cleaning supplies.
   - Item codes are automatic when left empty, for example `GPI-CS-0007`.
   - A new movement, **Record use**, covers consumables used in the office rather than handed to one person.
   - Every movement (in, issue, use, return, transfer, adjust, write-off) is on the item's stock card with the balance after it.
+  - **Proof of receipt** (optional): when stock comes in (Receive, Return, or the opening quantity of a new item), up to 4 photos can be taken with the camera or picked from the gallery: the delivery, the DR or the receipt. They show as thumbnails on that line of the stock card and open full size. Like item photos, they are re-encoded with no camera or GPS data, and only staff can see them.
 - **The request link: `/request`** (e.g. https://ea.bishnoi.ai/request). One link for everyone, to share in group chats.
   - It covers reporting a problem, requesting items, or both in one go, with up to 4 photos (cleaned of location data) and an urgent flag.
   - **Signed in:** their details are filled in, and the requests go straight into the usual approval route.

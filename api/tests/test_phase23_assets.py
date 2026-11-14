@@ -132,3 +132,76 @@ def test_receiving_registers_assets(users):
     dup = admin.post("/api/v1/receiving", {"request_id": other["id"], "lines": [{"item_id": other["items"][0]["id"], "quantity": 1, "register_asset": True, "serial_numbers": ["mn-1"]}]})
     assert dup.status_code == 422
     assert carlo.get("/api/v1/receiving").status_code == 403
+
+
+def test_issue_several_as_one_issuance(users, client):
+    """Five of the same item to one person: one issuance, one notification, one acknowledgement, one form."""
+    import io
+
+    from pypdf import PdfReader
+
+    admin, carlo = users["admin"], users["carlo"]
+    made = new_asset(admin, name="Binder clip", category="Other", count=6).json()["created"]
+    first = made[0]["id"]
+    d = admin.get(f"/api/v1/assets/{first}").json()
+    assert d["identical_in_stock"] == 5
+    assert admin.post(f"/api/v1/assets/{first}/assign", {"employee_id": me_id(carlo), "count": 7}).status_code == 422  # only 6 in stock
+    before = len(carlo.get("/api/v1/notifications").json()["items"])
+    r = admin.post(f"/api/v1/assets/{first}/assign", {"employee_id": me_id(carlo), "count": 5})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    ref = d["issue_ref"]
+    assert ref.startswith("EA-ISS-") and len(d["issued_together"]) == 5
+    held = [a for a in carlo.get("/api/v1/me/assets").json() if a["name"] == "Binder clip"]
+    assert len(held) == 5 and {a["issue_ref"] for a in held} == {ref}
+    notes = carlo.get("/api/v1/notifications").json()["items"]
+    assert len(notes) == before + 1 and "Binder clip × 5" in notes[0]["title"]
+    # The sixth stays in stock; the registry shows two entries, not six.
+    g = admin.get("/api/v1/assets?q=Binder clip&grouped=true").json()
+    assert g["total"] == 2
+    issued = next(x for x in g["items"] if x["holder"])
+    assert issued["group"]["count"] == 5 and len({m["serial_number"] for m in issued["group"]["members"]}) == 5
+    assert admin.get("/api/v1/assets?q=Binder clip").json()["total"] == 6  # ungrouped list unchanged
+    # One issuance form lists all five.
+    doc = admin.post("/api/v1/documents", {"template_key": "asset_issuance_form", "related_id": first}).json()
+    text = "".join(p.extract_text() for p in PdfReader(io.BytesIO(client.get(doc["url"], headers=admin.h).content)).pages)
+    assert "Items issued (5)" in text and ref in text and all(m["serial_number"] in text for m in issued["group"]["members"])
+    # Acknowledging one acknowledges the set.
+    other = issued["group"]["members"][3]["id"]
+    a = carlo.post(f"/api/v1/assets/{other}/acknowledge").json()
+    assert all(x["acknowledged"] for x in a["issued_together"])
+    assert all(x["acknowledged_at"] for x in carlo.get("/api/v1/me/assets").json() if x["issue_ref"] == ref)
+    # Returning one takes it out of the issuance.
+    admin.post(f"/api/v1/assets/{other}/return", {"condition": "used"})
+    assert len(admin.get(f"/api/v1/assets/{first}").json()["issued_together"]) == 4
+
+
+def test_earlier_issues_are_grouped_on_start(users, client):
+    """Assets issued one by one before issuance references existed are grouped by person, item and day."""
+    from sqlalchemy import update
+
+    from app.asset_ids import backfill_issue_refs
+    from app.db import session_factory
+    from app.models_ops import Asset
+
+    admin, eli = users["admin"], users["eli"]
+    made = new_asset(admin, name="Stapler", category="Office equipment", count=3).json()["created"]
+    for m in made:  # the old way: one at a time
+        admin.post(f"/api/v1/assets/{m['id']}/assign", {"employee_id": me_id(eli)})
+    ids = [m["id"] for m in made]
+    assert len({admin.get(f"/api/v1/assets/{i}").json()["issue_ref"] for i in ids}) == 3
+
+    async def legacy_then_backfill():
+        async with session_factory()() as s:
+            await s.execute(update(Asset).where(Asset.id.in_(ids)).values(issue_ref=None))
+            await s.commit()
+            return await backfill_issue_refs(s)
+
+    assert client.portal.call(legacy_then_backfill) >= 1
+    refs = {admin.get(f"/api/v1/assets/{i}").json()["issue_ref"] for i in ids}
+    assert len(refs) == 1 and None not in refs
+    g = admin.get("/api/v1/assets?q=Stapler&grouped=true").json()
+    assert g["total"] == 1 and g["items"][0]["group"]["count"] == 3
+    # One acknowledgement covers all three.
+    eli.post(f"/api/v1/assets/{ids[1]}/acknowledge")
+    assert all(admin.get(f"/api/v1/assets/{i}").json()["acknowledged_at"] for i in ids)

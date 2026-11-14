@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertTriangle, ArrowRight, Check, CircleCheck, Download, FileSpreadsheet, FileText, Sheet, Upload, X } from "lucide-react";
 import { api, invalidate, post, useApi, type ApiError } from "@/lib/api";
 import { Button, Field, Input, Segmented, Select } from "@/components/ui/controls";
+import { ChosenFile, FileDrop } from "@/components/ui/file-drop";
 import { Dialog, useToast } from "@/components/ui/feedback";
 import { cn } from "@/lib/cn";
 import { MoreMenu, type MenuAction } from "@/components/ui/more-menu";
@@ -310,12 +311,9 @@ export function ImportWizard({ ds, onClose }: { ds: DatasetInfo; onClose: () => 
               />
             </Field>
           )}
-          <label className="flex cursor-pointer flex-col items-center gap-2 rounded-[var(--radius-panel)] border border-dashed border-edge px-4 py-8 text-center hover:border-ink-3 hover:bg-canvas has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent/60">
-            <Upload className="size-6 text-ink-2" strokeWidth={1.6} aria-hidden="true" />
-            <span className="text-[14.5px] font-medium">{file ? file.name : "Choose an Excel (.xlsx) or CSV file"}</span>
-            <span className="text-[12.5px] text-ink-3">Up to 10 MB and 5,000 rows. Formulas and macros are never run.</span>
-            <input type="file" accept=".xlsx,.csv" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </label>
+          <FileDrop accept=".xlsx,.csv" multiple={false} camera={false} title="Excel (.xlsx) or CSV file" hint="up to 10 MB and 5,000 rows. Formulas and macros are never run." inputLabel="Excel or CSV file" onFiles={(f) => setFile(f[0])}>
+            {file && <ChosenFile file={file} onRemove={() => setFile(null)} />}
+          </FileDrop>
           {ds.note && <p className="text-[12.5px] text-ink-3">{ds.note}</p>}
         </div>
       )}

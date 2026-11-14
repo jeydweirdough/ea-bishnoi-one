@@ -11,7 +11,6 @@ import {
   Download,
   Flag,
   Landmark,
-  LoaderCircle,
   Lock,
   MessageSquare,
   PackageCheck,
@@ -29,6 +28,7 @@ import {
 import { api, fmtDate, fmtDateTime, fmtRelative, fmtSize, invalidate, post, useApi, type ApiError, type Priority, type RequestDetail as Detail } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
 import { Button, Field, Segmented, Switch, Textarea, buttonClass } from "@/components/ui/controls";
+import { FileDrop } from "@/components/ui/file-drop";
 import { Dialog, ErrorState, Panel, useToast } from "@/components/ui/feedback";
 import { KIND_ICON, PRIORITY_LABEL, PriorityLabel, SlaLabel, StatusBadge } from "@/components/ui/status";
 import { useShell } from "@/components/shell/shell-context";
@@ -586,7 +586,7 @@ function Attachments({ d, onChange }: { d: Detail; onChange: () => void }) {
   const [uploading, setUploading] = useState(false);
   const can = d.actions.includes("attach");
 
-  async function upload(files: FileList | null) {
+  async function upload(files: FileList | File[] | null) {
     if (!files?.length) return;
     setUploading(true);
     for (const f of Array.from(files)) {
@@ -627,11 +627,7 @@ function Attachments({ d, onChange }: { d: Detail; onChange: () => void }) {
       )}
       {can && (
         <div className={cn("p-3 sm:px-5", d.attachments.length > 0 && "border-t border-line")}>
-          <label className={cn(buttonClass("ghost", "sm"), "cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent/60")}>
-            {uploading ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Paperclip className="size-4" strokeWidth={1.75} aria-hidden="true" />}
-            {uploading ? "Uploading…" : "Attach a file"}
-            <input type="file" multiple className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.docx,.xlsx,.csv,.txt" onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />
-          </label>
+          <FileDrop compact busy={uploading} onFiles={(f) => upload(f)} hint="PDF, image, Word, Excel or text" />
         </div>
       )}
     </Panel>

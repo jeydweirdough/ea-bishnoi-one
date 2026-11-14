@@ -1,10 +1,13 @@
 """Phase 2.3a — equipment inventory: stock lines, movements, reservations, reorders and counts."""
 
+import hashlib
+import secrets
 from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -16,7 +19,10 @@ from ..models_ops3 import INV_CATEGORIES, InventoryCount, InventoryItem, StockMo
 from ..ops_common import check_version, company_for, count, day, employee_in, money, scoped
 from ..security import Principal, Session, Staff
 from ..serialize import iso, person
-from .photos import photo_url
+from ..config import get_settings
+from ..models import Attachment
+from .attachments import storage_dir
+from .photos import photo_url, process as clean_photo
 from ..workflow import event as request_event, is_operator
 
 from ..asset_ids import ensure_serial
@@ -40,8 +46,9 @@ def item_out(i: InventoryItem) -> dict:
     }
 
 
-def movement_out(m: StockMovement) -> dict:
+def movement_out(m: StockMovement, proofs: dict[int, list[int]] | None = None) -> dict:
     return {
+        "proofs": [{"id": a, "thumb": f"/api/v1/inventory/proofs/{a}?size=thumb", "full": f"/api/v1/inventory/proofs/{a}?size=full"} for a in (proofs or {}).get(m.id, [])],
         "id": m.id, "reference": m.reference, "item_id": m.item_id, "kind": m.kind, "quantity": m.quantity, "balance_after": m.balance_after,
         "request_id": m.request_id, "receipt_id": m.receipt_id, "issued_to": person(m.issued_to), "reason": m.reason, "actor": person(m.actor), "at": iso(m.at),
     }
@@ -182,11 +189,14 @@ async def create_item(body: ItemIn, principal: Staff, session: Session) -> dict:
         await session.flush()
     except IntegrityError:
         raise conflict(f"{body.item_code} already has a stock line at {body.location}")
+    opening = None
     if body.opening_quantity:
-        await move(session, principal, i, "stock_in", body.opening_quantity, reason="Opening balance")
+        opening = await move(session, principal, i, "stock_in", body.opening_quantity, reason="Opening balance")
+        await session.flush()
     await audit(session, actor_id=principal.id, action="inventory.item_create", entity_type="inventory_item", entity_id=i.id, entity_ref=i.item_code, company_id=cid, data={"location": i.location})
     await session.commit()
-    return item_out(await scoped(session, InventoryItem, i.id, principal))
+    # The opening movement can take a proof-of-receipt photo right after.
+    return {**item_out(await scoped(session, InventoryItem, i.id, principal)), "opening_movement_id": opening.id if opening else None}
 
 
 @router.get("/items/{item_id}")
@@ -196,9 +206,11 @@ async def get_item(item_id: int, principal: Staff, session: Session) -> dict:
     res = (await session.execute(select(StockReservation).where(StockReservation.item_id == i.id, StockReservation.status == "reserved"))).scalars().all()
     reqs = {r.id: r for r in (await session.execute(select(Request).where(Request.id.in_([x.request_id for x in res] or [0])))).scalars()}
     other = (await session.execute(select(InventoryItem).where(InventoryItem.company_id == i.company_id, InventoryItem.item_code == i.item_code, InventoryItem.id != i.id))).scalars()
+    moves = list(moves)
+    proofs = await proofs_for(session, [m.id for m in moves])
     return {
         **item_out(i),
-        "movements": [movement_out(m) for m in moves],
+        "movements": [movement_out(m, proofs) for m in moves],
         "reservations": [{"id": r.id, "quantity": r.quantity, "request": {"id": r.request_id, "reference": reqs[r.request_id].reference, "subject": reqs[r.request_id].subject, "requester": person(reqs[r.request_id].requester)}} for r in res],
         "other_locations": [{"id": o.id, "location": o.location, "on_hand": o.on_hand, "available": o.available} for o in other],
         "can_adjust": can_adjust(principal),
@@ -290,21 +302,92 @@ async def move_stock(item_id: int, body: MoveIn, principal: Staff, session: Sess
     return await get_item(i.id, principal, session)
 
 
+# ------------------------------------------------------------------ proof of receipt
+# Optional photos of what arrived (the delivery, the DR, the boxes), taken with the camera or
+# picked from the gallery. Re-encoded like item photos: upright, resized, no camera/GPS data.
+
+PROOF = "proof"
+PROOF_KINDS = ("stock_in", "return", "transfer_in")
+MAX_PROOFS = 4
+
+
+async def proofs_for(session, movement_ids: list[int]) -> dict[int, list[int]]:
+    out: dict[int, list[int]] = {}
+    if movement_ids:
+        rows = await session.execute(
+            select(Attachment.id, Attachment.owner_id).where(Attachment.owner_type == "stock_movement", Attachment.owner_id.in_(movement_ids), Attachment.purpose == PROOF).order_by(Attachment.id)
+        )
+        for aid, mid in rows.all():
+            out.setdefault(mid, []).append(aid)
+    return out
+
+
+@router.post("/movements/{movement_id}/proof", status_code=201)
+async def add_proof(movement_id: int, principal: Staff, session: Session, file: UploadFile = File(...)) -> dict:
+    m = await session.get(StockMovement, movement_id)
+    if m is None:
+        raise not_found()
+    item = await scoped(session, InventoryItem, m.item_id, principal)
+    if m.kind not in PROOF_KINDS:
+        raise bad_request({"message": "Proof of receipt goes on stock that came in"})
+    if len((await proofs_for(session, [m.id])).get(m.id, [])) >= MAX_PROOFS:
+        raise bad_request({"message": f"At most {MAX_PROOFS} proof photos per receipt"})
+    limit = get_settings().max_upload_mb * 1024 * 1024
+    data = await file.read(limit + 1)
+    if not data:
+        raise bad_request({"message": "The photo is empty"})
+    if len(data) > limit:
+        raise bad_request({"message": f"Photos must be {get_settings().max_upload_mb} MB or smaller"})
+    full, thumb = clean_photo(data)
+    key = secrets.token_hex(16)
+    (storage_dir() / key).write_bytes(full)
+    (storage_dir() / f"{key}_t").write_bytes(thumb)
+    att = Attachment(
+        owner_type="stock_movement", owner_id=m.id, filename=f"{m.reference}-proof.jpg", content_type="image/jpeg", size=len(full),
+        storage_key=key, sha256=hashlib.sha256(full).hexdigest(), uploaded_by_id=principal.id, purpose=PROOF,
+    )
+    session.add(att)
+    await session.flush()
+    await audit(session, actor_id=principal.id, action="inventory.proof_add", entity_type="inventory_item", entity_id=item.id, entity_ref=item.item_code, company_id=item.company_id, data={"movement": m.reference, "photo": att.id})
+    await session.commit()
+    return {"id": att.id, "thumb": f"/api/v1/inventory/proofs/{att.id}?size=thumb", "full": f"/api/v1/inventory/proofs/{att.id}?size=full"}
+
+
+@router.get("/proofs/{photo_id}")
+async def get_proof(photo_id: int, principal: Staff, session: Session, size: Literal["thumb", "full"] = Query("thumb")):
+    att = await session.get(Attachment, photo_id)
+    if att is None or att.owner_type != "stock_movement" or att.purpose != PROOF:
+        raise not_found()
+    m = await session.get(StockMovement, att.owner_id)
+    if m is None:
+        raise not_found()
+    await scoped(session, InventoryItem, m.item_id, principal)
+    path = storage_dir() / (f"{att.storage_key}_t" if size == "thumb" else att.storage_key)
+    if not path.exists():
+        raise not_found("The stored photo is missing")
+    return FileResponse(path, media_type="image/jpeg", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
+
+
 async def issue_assets(session, principal: Principal, item: InventoryItem, qty: int, holder_id: int, request: Request | None):
     """Serialized-on-issue items become individual asset records held by the recipient."""
     if not item.serialized_on_issue:
         return
+    ref = await next_reference(session, "ISS")  # one issuance: one acknowledgement for the set
+    made = []
     for _ in range(qty):
         a = Asset(
             reference=await next_reference(session, "AST"), company_id=item.company_id, name=item.name, category="IT equipment" if item.category == "Equipment" else "Other",
             brand=item.brand, model=item.model, quantity=1, unit=item.unit, condition=AssetCondition.brand_new, status=AssetStatus.assigned, holder_id=holder_id,
-            issued_by_id=principal.id, date_issued=date.today(), purchase_reference=item.item_code, request_id=request.id if request else None,
+            issued_by_id=principal.id, date_issued=date.today(), purchase_reference=item.item_code, request_id=request.id if request else None, issue_ref=ref,
         )
         await ensure_serial(session, a)
         session.add(a)
         await session.flush()
-        session.add(AssetEvent(asset_id=a.id, type="assigned", message=f"Issued from inventory {item.item_code} ({item.location})", actor_id=principal.id, to_holder_id=holder_id))
-        await notify(session, {holder_id}, kind="task_assignment", title=f"Please acknowledge: {a.name}", body=f"{a.reference} was issued to you.", link=f"/asset/{a.id}")
+        session.add(AssetEvent(asset_id=a.id, type="assigned", message=f"Issued from inventory {item.item_code} ({item.location}) · {ref}", actor_id=principal.id, to_holder_id=holder_id, data={"issue_ref": ref, "items": qty}))
+        made.append(a)
+    if made:
+        what = f"{item.name} × {len(made)}" if len(made) > 1 else item.name
+        await notify(session, {holder_id}, kind="task_assignment", title=f"Please acknowledge: {what}", body=f"{ref} was issued to you. Confirm you received {'them' if len(made) > 1 else 'it'}.", link=f"/asset/{made[0].id}")
 
 
 # ------------------------------------------------------------------ requests to fill (reserve / issue)
@@ -553,7 +636,8 @@ async def movements(principal: Staff, session: Session, kind: str | None = None,
     total = await count(session, stmt)
     rows = (await session.execute(stmt.order_by(StockMovement.id.desc()).offset((page - 1) * page_size).limit(page_size))).scalars().all()
     items = {i.id: i for i in (await session.execute(select(InventoryItem).where(InventoryItem.id.in_([m.item_id for m in rows] or [0])))).scalars()}
-    return {"items": [{**movement_out(m), "item": {"id": m.item_id, "item_code": items[m.item_id].item_code, "name": items[m.item_id].name, "location": items[m.item_id].location, "unit": items[m.item_id].unit}} for m in rows], "total": total, "page": page, "page_size": page_size}
+    proofs = await proofs_for(session, [m.id for m in rows])
+    return {"items": [{**movement_out(m, proofs), "item": {"id": m.item_id, "item_code": items[m.item_id].item_code, "name": items[m.item_id].name, "location": items[m.item_id].location, "unit": items[m.item_id].unit}} for m in rows], "total": total, "page": page, "page_size": page_size}
 
 
 async def stock_in_from_receipt(session, principal: Principal, item_id: int, qty: int, receipt_id: int, request_id: int):

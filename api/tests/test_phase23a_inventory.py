@@ -128,3 +128,40 @@ def test_consumables_get_codes_and_record_use(users):
     # Clearing the code on edit keeps it.
     e = admin.patch(f"/api/v1/inventory/items/{a['id']}", {**{k: d[k] for k in ("name", "category", "unit", "location", "reorder_level", "reorder_quantity")}, "item_code": None, "version": d["version"]})
     assert e.status_code == 200 and e.json()["item_code"] == a["item_code"]
+
+
+def test_proof_of_receipt_photos(users):
+    import io
+
+    from PIL import Image
+
+    from .test_item_photos import jpeg_with_gps
+
+    admin, bea, carlo = users["admin"], users["assistant"], users["carlo"]
+    i = item(admin, item_code=None, name="Alcohol 70%", category="Consumables", unit="bottle", opening_quantity=12).json()
+    assert i["opening_movement_id"]
+    up = lambda user, mid, data=None: user.c.post(f"/api/v1/inventory/movements/{mid}/proof", headers=user.h, files={"file": ("dr.jpg", data or jpeg_with_gps(), "image/jpeg")})
+    r = up(admin, i["opening_movement_id"])
+    assert r.status_code == 201, r.text
+    # Receiving more: proof is optional, then added to that movement.
+    d = bea.post(f"/api/v1/inventory/items/{i['id']}/move", {"kind": "stock_in", "quantity": 6, "reason": "DR 1182"}).json()
+    got = d["movements"][0]
+    assert got["kind"] == "stock_in" and got["proofs"] == []
+    assert up(bea, got["id"]).status_code == 201
+    d = bea.get(f"/api/v1/inventory/items/{i['id']}").json()
+    assert len(d["movements"][0]["proofs"]) == 1 and len(d["movements"][1]["proofs"]) == 1
+    # Stored clean: no camera or GPS data.
+    full = admin.c.get(d["movements"][0]["proofs"][0]["full"], headers=admin.h)
+    assert full.status_code == 200 and len(Image.open(io.BytesIO(full.content)).getexif()) == 0
+    # Only stock that came in takes proof; at most 4; staff only; not a photo → refused.
+    used = bea.post(f"/api/v1/inventory/items/{i['id']}/move", {"kind": "use", "quantity": 1, "reason": "Clinic"}).json()["movements"][0]
+    assert up(bea, used["id"]).status_code == 422
+    for _ in range(3):
+        assert up(bea, got["id"]).status_code == 201
+    assert up(bea, got["id"]).status_code == 422
+    assert up(carlo, got["id"]).status_code == 403
+    assert carlo.c.get(d["movements"][0]["proofs"][0]["thumb"], headers=carlo.h).status_code == 403
+    assert up(bea, got["id"], b"not an image").status_code == 422
+    # The movements log shows them too.
+    log = bea.get("/api/v1/inventory/movements?kind=stock_in").json()["items"]
+    assert any(len(m["proofs"]) == 4 for m in log)

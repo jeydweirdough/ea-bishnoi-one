@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, ChevronLeft, ChevronRight, ImagePlus, Star, Trash2, X, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, Star, Trash2, X, type LucideIcon } from "lucide-react";
 import { api, invalidate, useApi, type ApiError } from "@/lib/api";
-import { Button } from "@/components/ui/controls";
 import { Panel, useToast } from "@/components/ui/feedback";
 import { cn } from "@/lib/cn";
+import { ACCEPT_IMAGES, FileDrop } from "./file-drop";
 
 export type PhotoOwner = "asset" | "vehicle" | "inventory_item";
 type Photo = { id: number; thumb: string; full: string; main: boolean };
@@ -56,29 +56,6 @@ export function ItemThumb({ src, icon: Icon, size = "md", className }: { src?: s
   );
 }
 
-/** Two pickers: the phone's rear camera, and the photo library / files. */
-function PhotoButtons({ onFiles, busy, compact }: { onFiles: (files: File[]) => void; busy?: boolean; compact?: boolean }) {
-  const camera = useRef<HTMLInputElement>(null);
-  const library = useRef<HTMLInputElement>(null);
-  const take = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    if (files.length) onFiles(files);
-  };
-  return (
-    <span className="flex flex-wrap gap-2">
-      <Button size="sm" variant={compact ? "secondary" : "primary"} icon={Camera} busy={busy} onClick={() => camera.current?.click()}>
-        Take photo
-      </Button>
-      <Button size="sm" variant="ghost" icon={ImagePlus} disabled={busy} onClick={() => library.current?.click()}>
-        Upload
-      </Button>
-      <input ref={camera} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-label="Take a photo" onChange={take} />
-      <input ref={library} type="file" accept="image/jpeg,image/png,image/webp,image/heic" multiple className="sr-only" tabIndex={-1} aria-label="Upload photos" onChange={take} />
-    </span>
-  );
-}
-
 /**
  * The item's photos, like a shop listing: a large main photo, a strip of the others, and
  * (for staff) Take photo / Upload. Tapping a photo opens it full size, where staff can make it
@@ -121,15 +98,13 @@ export function PhotoGallery({ ownerType, ownerId, canEdit, onChange }: { ownerT
   return (
     <Panel title="Photos" meta={photos.length ? `${photos.length}` : undefined}>
       {ordered.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 px-5 py-8 text-center">
-          <span className="flex size-12 items-center justify-center rounded-full border border-dashed border-edge text-ink-2" aria-hidden="true">
-            <Camera className="size-5" strokeWidth={1.6} />
-          </span>
-          <p className="max-w-[34ch] text-[13.5px] text-ink-2">
-            {canEdit ? "Add a photo so everyone knows exactly what this item looks like." : "No photo of this item yet."}
-          </p>
-          {canEdit && <PhotoButtons onFiles={add} busy={busy} />}
-        </div>
+        canEdit ? (
+          <div className="p-3 sm:p-4">
+            <FileDrop accept={ACCEPT_IMAGES} onFiles={add} busy={busy} inputLabel="Upload photos" title="Add a photo" hint="so everyone knows exactly what this item looks like" />
+          </div>
+        ) : (
+          <p className="px-5 py-8 text-center text-[13.5px] text-ink-2">No photo of this item yet.</p>
+        )
       ) : (
         <div className="p-3 sm:p-4">
           <button type="button" onClick={() => setViewing(0)} className="block w-full overflow-hidden rounded-[10px] border border-line bg-canvas" aria-label="Open the main photo">
@@ -149,9 +124,7 @@ export function PhotoGallery({ ownerType, ownerId, canEdit, onChange }: { ownerT
             </ul>
           )}
           {canEdit && photos.length < MAX && (
-            <div className="mt-3">
-              <PhotoButtons onFiles={add} busy={busy} compact />
-            </div>
+            <FileDrop accept={ACCEPT_IMAGES} onFiles={add} busy={busy} compact inputLabel="Upload photos" className="mt-3" />
           )}
         </div>
       )}
@@ -174,7 +147,7 @@ export function PhotoGallery({ ownerType, ownerId, canEdit, onChange }: { ownerT
 }
 
 /** Full-screen photo viewer: swipe or arrow keys between photos. */
-function Viewer({ photos, index, onIndex, onClose, canEdit, onChanged }: { photos: Photo[]; index: number; onIndex: (i: number) => void; onClose: () => void; canEdit: boolean; onChanged: () => void }) {
+export function Viewer({ photos, index, onIndex, onClose, canEdit, onChanged }: { photos: Photo[]; index: number; onIndex: (i: number) => void; onClose: () => void; canEdit: boolean; onChanged: () => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const touch = useRef<number | null>(null);
@@ -256,7 +229,7 @@ function Viewer({ photos, index, onIndex, onClose, canEdit, onChanged }: { photo
 }
 
 /** Photos chosen while creating a record; they are uploaded once the record is saved. */
-export function PendingPhotos({ files, onChange, max = MAX, note = "what the item looks like" }: { files: File[]; onChange: (f: File[]) => void; max?: number; note?: string }) {
+export function PendingPhotos({ files, onChange, max = MAX, note = "what the item looks like", title = "Photos", showMain = true }: { files: File[]; onChange: (f: File[]) => void; max?: number; note?: string; title?: string; showMain?: boolean }) {
   const [urls, setUrls] = useState<string[]>([]);
   useEffect(() => {
     const u = files.map((f) => URL.createObjectURL(f));
@@ -265,24 +238,30 @@ export function PendingPhotos({ files, onChange, max = MAX, note = "what the ite
     return () => u.forEach((x) => URL.revokeObjectURL(x));
   }, [files]);
   return (
-    <div className="mb-5 rounded-[var(--radius-ctl)] border border-line bg-canvas p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[13.5px] font-bold">
-          Photos <span className="font-normal text-ink-3">· {note}</span>
-        </p>
-        {files.length < max && <PhotoButtons compact onFiles={(f) => onChange([...files, ...f].slice(0, max))} />}
-      </div>
+    <FileDrop
+      accept={ACCEPT_IMAGES}
+      className="mb-5"
+      inputLabel="Upload photos"
+      disabled={files.length >= max}
+      title={
+        <>
+          {title} <span className="font-normal text-ink-3">· {note}</span>
+        </>
+      }
+      hint={files.length >= max ? `${max} is the most` : undefined}
+      onFiles={(f) => onChange([...files, ...f].slice(0, max))}
+    >
       {files.length > 0 && (
         <ul className="no-scrollbar mt-3 flex gap-2 overflow-x-auto">
           {urls.map((u, i) => (
             <li key={u} className="relative shrink-0">
               {/* eslint-disable-next-line @next/next/no-img-element -- local preview */}
               <img src={u} alt={`Photo ${i + 1}`} className="size-20 rounded-[8px] border border-line object-cover" />
-              {i === 0 && <span className="absolute bottom-1 left-1 rounded bg-ink px-1.5 text-[11px] font-medium text-white">Main</span>}
+              {showMain && i === 0 && <span className="absolute bottom-1 left-1 rounded bg-ink px-1.5 text-[11px] font-medium text-white">Main</span>}
               <button
                 type="button"
                 onClick={() => onChange(files.filter((_, j) => j !== i))}
-                aria-label={`Remove photo ${i + 1}`}
+                aria-label={`Remove ${title === "Photos" ? "photo" : title.toLowerCase()} ${i + 1}`}
                 className="absolute -right-1.5 -top-1.5 flex size-7 items-center justify-center rounded-full border border-line bg-sheet text-ink shadow-sm"
               >
                 <X className="size-3.5" strokeWidth={2} />
@@ -291,6 +270,6 @@ export function PendingPhotos({ files, onChange, max = MAX, note = "what the ite
           ))}
         </ul>
       )}
-    </div>
+    </FileDrop>
   );
 }

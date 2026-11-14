@@ -12,7 +12,6 @@ import {
   MonitorX,
   Package,
   Paperclip,
-  Camera,
   Plus,
   Send,
   ShieldAlert,
@@ -29,6 +28,7 @@ import { api, invalidate, post, useApi, ApiError, fmtSize, type Kind, type Optio
 import { Button, Field, Input, Segmented, Select, Textarea } from "@/components/ui/controls";
 import { useToast } from "@/components/ui/feedback";
 import { shrink } from "@/components/ui/photos";
+import { FileDrop } from "@/components/ui/file-drop";
 import { cn } from "@/lib/cn";
 
 type ItemDraft = {
@@ -430,29 +430,17 @@ export function RequestForm({ mode, initial }: { mode: "concern" | "supplies"; i
               ))}
             </ul>
           )}
-          <div className="flex flex-wrap gap-2">
-            <label className="flex min-h-12 cursor-pointer items-center gap-2.5 rounded-[var(--radius-ctl)] border border-dashed border-edge px-4 text-[14px] font-medium text-ink-2 transition-colors duration-150 hover:border-ink-3 hover:text-ink has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent/60">
-              <Camera className="size-[18px]" strokeWidth={1.75} aria-hidden="true" />
-              Take photo
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="sr-only"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (f) addFiles([new File([await shrink(f)], `photo-${Date.now()}.jpg`, { type: "image/jpeg" })]);
-                }}
-              />
-            </label>
-            <label className="flex min-h-12 cursor-pointer items-center gap-2.5 rounded-[var(--radius-ctl)] border border-dashed border-edge px-4 text-[14px] font-medium text-ink-2 transition-colors duration-150 hover:border-ink-3 hover:text-ink has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent/60">
-              <Paperclip className="size-[18px]" strokeWidth={1.75} aria-hidden="true" />
-              Add a file
-              <input type="file" multiple accept={ACCEPT} className="sr-only" onChange={(e) => (addFiles(e.target.files), (e.target.value = ""))} />
-            </label>
-          </div>
-          <p className="text-[12.5px] text-ink-3">Optional · up to {MAX_MB} MB each. A photo helps Admin see exactly what you need or what is broken.</p>
+          <FileDrop
+            accept={ACCEPT}
+            hint={`optional · up to ${MAX_MB} MB each. A photo helps Admin see exactly what you need or what is broken.`}
+            onFiles={async (list) => {
+              // Big camera photos are shrunk on the phone so they upload quickly.
+              const ready = await Promise.all(
+                list.map(async (f) => (f.type.startsWith("image/") && f.type !== "image/gif" && f.size > 1.5 * 1024 * 1024 ? new File([await shrink(f)], f.name.replace(/[.][^.]+$/, "") + ".jpg", { type: "image/jpeg" }) : f)),
+              );
+              addFiles(ready);
+            }}
+          />
         </Step>
 
         <section>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Ban, FilePlus2, FileText, PenLine, RefreshCcw, Send, Upload } from "lucide-react";
 import { api, fmtDateTime, invalidate, post, qs, useApi, type ApiError, type Person } from "@/lib/api";
 import { Button, Chip, Field, Input, Select, Textarea } from "@/components/ui/controls";
+import { ChosenFile, FileDrop } from "@/components/ui/file-drop";
 import { Dialog, EmptyState, Pager, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { useShell } from "@/components/shell/shell-context";
 import { cn } from "@/lib/cn";
@@ -221,9 +222,9 @@ function SignedDialog({ doc, onClose, onDone }: { doc: Doc | null; onClose: () =
         </>
       }
     >
-      <Field label="Signed scan (PDF or image)" htmlFor="signed-file">
-        <Input id="signed-file" type="file" accept=".pdf,.png,.jpg,.jpeg" className="pt-2" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-      </Field>
+      <FileDrop accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,image/*" multiple={false} title="Signed scan" hint="PDF or photo" inputLabel="Signed scan (PDF or image)" onFiles={(f) => setFile(f[0])}>
+        {file && <ChosenFile file={file} onRemove={() => setFile(null)} />}
+      </FileDrop>
     </Dialog>
   );
 }

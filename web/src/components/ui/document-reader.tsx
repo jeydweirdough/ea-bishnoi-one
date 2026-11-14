@@ -5,6 +5,9 @@ import { Camera, FileCheck2, LoaderCircle, ScanText, TriangleAlert, Upload, X } 
 import { api, type ApiError } from "@/lib/api";
 import { Button } from "./controls";
 import { cn } from "@/lib/cn";
+import { accepts, usePasteTarget } from "./file-drop";
+
+const DOC_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp";
 
 export type ScanKind = "registration" | "travel_document" | "contract" | "vehicle_renewal" | "fleet_card" | "corporate_card" | "vehicle";
 
@@ -42,6 +45,19 @@ export function DocumentReader({ kind, file, onFile, onRead, discard = false }: 
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string>();
   const [over, setOver] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  usePasteTarget(box, (files) => {
+    if (state !== "reading" && files[0]) take(files[0]);
+  });
+
+  function take(f: File) {
+    if (!accepts(f, DOC_ACCEPT)) {
+      setError(`"${f.name}" isn't a PDF, JPEG, PNG or WebP file.`);
+      setState("error");
+      return;
+    }
+    void read(f);
+  }
 
   async function read(f: File) {
     onFile(f);
@@ -76,6 +92,7 @@ export function DocumentReader({ kind, file, onFile, onRead, discard = false }: 
 
   return (
     <div
+      ref={box}
       onDragOver={(e) => {
         e.preventDefault();
         setOver(true);
@@ -85,11 +102,11 @@ export function DocumentReader({ kind, file, onFile, onRead, discard = false }: 
         e.preventDefault();
         setOver(false);
         const f = e.dataTransfer.files?.[0];
-        if (f) void read(f);
+        if (f) take(f);
       }}
       className={cn("mb-5 rounded-[var(--radius-panel)] border border-dashed p-4 transition-colors", over ? "border-ink bg-hover" : "border-edge bg-canvas", state === "done" && "border-solid border-line bg-sheet")}
     >
-      <input ref={input} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" className="sr-only" aria-label="Document file" onChange={(e) => e.target.files?.[0] && read(e.target.files[0])} />
+      <input ref={input} type="file" accept={DOC_ACCEPT} className="sr-only" aria-label="Document file" onChange={(e) => e.target.files?.[0] && read(e.target.files[0])} />
       <input ref={camera} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-label="Photograph the document" onChange={(e) => e.target.files?.[0] && read(e.target.files[0])} />
       {state === "idle" || state === "error" ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -98,6 +115,7 @@ export function DocumentReader({ kind, file, onFile, onRead, discard = false }: 
             <p className="text-[14.5px] font-bold">{discard ? "Upload a photo of the card" : "Upload the document"}</p>
             <p className="text-[13px] leading-snug text-ink-3">The system reads {WHAT[kind]}. You review them before saving.{" "}
               {discard ? "The photo is read, then discarded: card images are never stored." : "PDF or photo, up to 10 MB."}
+              <span className="max-md:hidden"> Drag it here or paste a screenshot.</span>
             </p>
             {error && (
               <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-[13px] text-danger">
