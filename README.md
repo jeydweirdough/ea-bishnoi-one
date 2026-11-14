@@ -58,7 +58,7 @@ Copy `api/.env.example` to `api/.env` and set `DATABASE_URL` to the Neon connect
 ## Tests
 
 ```bash
-cd api && pytest                  # 99 API tests (incl. sign-in, the request link, proof of receipt, issuing several items as one, automatic serials, document reading, added people and item photos): requests, approvals, SLA, tasks, audit, assets, inventory, fleet, compliance, travel, contracts, banking, import/export, documents, reports
+cd api && pytest                  # 100 API tests (incl. sign-in, the request link, proof of receipt, issuing several items as one, automatic serials, document reading, added people and item photos): requests, approvals, SLA, tasks, audit, assets, inventory, fleet, compliance, travel, contracts, banking, import/export, documents, reports
 cd web && npx eslint src && npm run build
 ```
 

@@ -321,7 +321,7 @@ def _inv_row(i: InventoryItem) -> dict:
         "item_code": i.item_code, "company_code": code_of(i.company), "item_name": i.name, "category": i.category, "brand": i.brand, "model": i.model, "unit": i.unit,
         "storage_location": i.location, "quantity_on_hand": i.on_hand, "reserved": i.reserved, "available": i.available, "reorder_level": i.reorder_level,
         "reorder_quantity": i.reorder_quantity, "unit_cost_php": i.unit_cost_php, "value_php": (i.unit_cost_php or Decimal(0)) * i.on_hand, "preferred_supplier": i.supplier,
-        "serialized_on_issue": "Yes" if i.serialized_on_issue else "No", "status": i.status,
+        "status": i.status,
     }
 
 
@@ -333,7 +333,7 @@ async def _inv_payload(session, principal, v):
         "company_id": cid, "item_code": v.get("item_code"), "name": v.get("item_name"), "category": v.get("category") or "Equipment", "brand": v.get("brand"), "model": v.get("model"),
         "unit": v.get("unit") or "pc", "location": v.get("storage_location"), "opening_quantity": v.get("quantity_on_hand") or 0, "reorder_level": v.get("reorder_level") or 0,
         "reorder_quantity": v.get("reorder_quantity") or 0, "unit_cost_php": v.get("unit_cost_php"), "supplier": v.get("preferred_supplier"),
-        "serialized_on_issue": v.get("serialized_on_issue") in (True, "Yes", "yes", "Y", "true"), "status": v.get("status") or "active",
+        "status": v.get("status") or "active",
     }
     return cid, pyd(ItemIn, p).model_dump()
 
@@ -395,7 +395,6 @@ INVENTORY = Dataset(
         F("unit_cost_php", "Unit Cost (PHP)", "decimal", synonyms=["unit cost", "cost", "price"], example="2450.00"),
         F("value_php", "Value (PHP)", "decimal", importable=False),
         F("preferred_supplier", "Preferred Supplier", synonyms=["supplier", "vendor"], example="Octagon"),
-        F("serialized_on_issue", "Serialized on Issue", "bool", example="No"),
         F("status", "Status", "choice", choices=["active", "discontinued"], example="active"),
     ],
     export_row=_inv_row, can_read=staff, can_write=inv_write, create=_inv_create, update=_inv_update, find=_inv_find,

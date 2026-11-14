@@ -8,6 +8,7 @@ import {
   ArrowLeftRight,
   CircleCheck,
   ClipboardCheck,
+  Boxes,
   Package,
   PackageCheck,
   Pencil,
@@ -24,6 +25,7 @@ import {
   Download,
   type LucideIcon,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { api, fmtDate, fmtRelative, fmtSize, invalidate, post, qs, useApi, ApiError, type Attachment, type Page, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
 import { Button, Chip, Field, Input, Select, Textarea, buttonClass } from "@/components/ui/controls";
@@ -145,14 +147,27 @@ const ASSET_FIELDS: FieldDef[] = [
   { name: "remarks", label: "Remarks", type: "textarea", more: true },
 ];
 
-/** Registering: say how many; each item becomes its own record with its own serial (typed, or numbered automatically). */
+/**
+ * Registering. Equipment: each piece becomes its own record with its own serial (typed, or numbered
+ * automatically). Consumables (clips, pens, paper): one stock line counted in pieces, in Consumables & Stock.
+ */
+const equipment = (v: Record<string, string>) => v.kind !== "consumable";
+const consumable = (v: Record<string, string>) => v.kind === "consumable";
 const REGISTER_FIELDS: FieldDef[] = [
-  ASSET_FIELDS[0],
-  ASSET_FIELDS[1],
-  { name: "count", label: "How many?", type: "number", required: true, half: true, hint: "Each item gets its own record" },
-  ...ASSET_FIELDS.slice(3, 7),
-  { name: "serial_numbers", label: "Serial numbers", type: "textarea", placeholder: "One per line, in order", hint: "Optional. Items without one are numbered automatically, like GPI-IT-00012." },
-  ...ASSET_FIELDS.slice(7),
+  {
+    name: "kind", label: "How is it tracked?", type: "choice", required: true,
+    options: [{ value: "equipment", label: "Equipment · one record per piece" }, { value: "consumable", label: "Consumable · counted in pieces" }],
+  },
+  { ...ASSET_FIELDS[0], label: "Name", placeholder: "e.g. Lenovo ThinkPad T14, or Binder clip" },
+  { ...ASSET_FIELDS[1], show: equipment },
+  { name: "count", label: "How many?", type: "number", required: true, half: true, hint: "Each piece gets its own record and serial", show: equipment },
+  { name: "pieces", label: "How many pieces?", type: "number", required: true, half: true, hint: "Recorded as one count, not per piece", show: consumable },
+  { name: "unit", label: "Unit", required: true, half: true, placeholder: "pc, box, pack", show: consumable },
+  { name: "stock_location", label: "Storage location", required: true, half: true, placeholder: "e.g. Supply cabinet", show: consumable },
+  ...ASSET_FIELDS.slice(3, 5),
+  ...ASSET_FIELDS.slice(5, 7).map((f) => ({ ...f, show: equipment })),
+  { name: "serial_numbers", label: "Serial numbers", type: "textarea", placeholder: "One per line, in order", hint: "Optional. Items without one are numbered automatically, like GPI-IT-00012.", show: equipment },
+  ...ASSET_FIELDS.slice(7).map((f) => ({ ...f, show: equipment })),
 ];
 
 function serialList(v: unknown): string[] {
@@ -330,14 +345,23 @@ export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) 
       <RecordDialog
         open={creating}
         onClose={() => setCreating(false)}
-        title="Register assets"
-        description="Equipment that is issued to people. For things counted out, like bond paper or toner, use Consumables & Stock."
+        title="Register"
+        description="Equipment (laptops, chairs, phones) gets one record and serial per piece. Consumables (clips, pens, paper) are counted in pieces in Consumables & Stock."
         fields={REGISTER_FIELDS}
-        initial={{ condition: "brand_new", count: "1" }}
+        initial={{ kind: "equipment", condition: "brand_new", count: "1", unit: "pc" }}
         submitLabel="Register"
         photos="asset"
         onSubmit={async (p) => {
-          const { serial_numbers, ...rest } = p;
+          if (p.kind === "consumable") {
+            const i = await post<{ id: number; item_code: string; on_hand: number; unit: string }>("/api/v1/inventory/items", {
+              item_code: null, name: p.name, category: "Consumables", unit: p.unit ?? "pc", location: p.stock_location, opening_quantity: p.pieces ?? 0, brand: p.brand, model: p.model,
+            });
+            toast(`Added to Consumables & Stock · ${i.item_code} · ${i.on_hand} ${i.unit}`);
+            invalidate();
+            return { ...i, photo_owner: "inventory_item" };
+          }
+          const { serial_numbers, kind: _kind, ...rest } = p;
+          void _kind;
           const a = await post<Asset & { created: { id: number; serial_number: string }[] }>("/api/v1/assets", { ...rest, count: p.count ?? 1, serial_numbers: serialList(serial_numbers) });
           const n = a.created.length;
           toast(n > 1 ? `Registered ${n} items · ${a.created[0].serial_number} to ${a.created[n - 1].serial_number}` : `Registered · SN ${a.serial_number}`);
@@ -642,6 +666,7 @@ export function AssetDetailView({ id }: { id: number }) {
   const q = useApi<AssetDetail>(`/api/v1/assets/${id}`);
   const [dialog, setDialog] = useState<ActionKey | null>(null);
   const [repair, setRepair] = useState<Repair | null>(null);
+  const [toStock, setToStock] = useState(false);
   const [busy, setBusy] = useState(false);
   if (q.error) return <PageFrame><ErrorState message={q.error.status === 404 ? "This asset doesn't exist or isn't shared with you." : q.error.message} /></PageFrame>;
   const a = q.data;
@@ -769,6 +794,14 @@ export function AssetDetailView({ id }: { id: number }) {
               </Button>
             )}
           </div>
+          {staff && has("edit") && (
+            <p className="mt-4 border-t border-line pt-3 text-[13px] text-ink-2">
+              Counted in pieces, like clips or pens?{" "}
+              <button type="button" onClick={() => setToStock(true)} className="font-medium text-ink underline underline-offset-2">
+                Move to Consumables &amp; Stock
+              </button>
+            </p>
+          )}
         </section>
       )}
 
@@ -890,6 +923,7 @@ export function AssetDetailView({ id }: { id: number }) {
           invalidate();
         }}
       />
+      {toStock && <ToStockDialog asset={a} onClose={() => setToStock(false)} />}
       <RecordDialog
         open={Boolean(repair)}
         onClose={() => setRepair(null)}
@@ -957,6 +991,42 @@ export function RecordAttachments({ ownerType, ownerId, items, canAdd, onChange 
 
 /* ---------------------------------------------------------------- employee: my assets */
 
+type ToStockPlan = { name: string; count: number; in_stock: number; issued: { holder: Person; quantity: number }[]; location: string | null; blocked: string | null };
+
+/** Every record of a counted item becomes one stock line: pieces in stock, and pieces issued per person. */
+function ToStockDialog({ asset, onClose }: { asset: Asset; onClose: () => void }) {
+  const toast = useToast();
+  const router = useRouter();
+  const plan = useApi<ToStockPlan>(`/api/v1/assets/${asset.id}/to-stock`);
+  const p = plan.data;
+  if (!p) return null;
+  const issued = p.issued.map((h) => `${h.quantity} with ${h.holder.name}`).join(", ");
+  const summary = `${p.count} ${p.name} record${p.count === 1 ? "" : "s"} become one stock line counted in pieces: ${p.in_stock} in stock${issued ? `, ${issued} (recorded as issued)` : ""}. Serial numbers are dropped; photos and files move with it.`;
+  return (
+    <RecordDialog
+      open
+      onClose={onClose}
+      title="Move to Consumables & Stock"
+      description={p.blocked ?? summary}
+      fields={p.blocked ? [] : [
+        { name: "location", label: "Storage location", required: true, half: true, placeholder: "e.g. Supply cabinet" },
+        { name: "unit", label: "Unit", required: true, half: true },
+      ]}
+      initial={{ location: p.location ?? "", unit: "pc" }}
+      submitLabel={p.blocked ? "Close" : `Move ${p.count} into one stock line`}
+      onSubmit={async (v) => {
+        if (p.blocked) return;
+        const r = await post<{ item_id: number; item_code: string; moved: number }>(`/api/v1/assets/${asset.id}/to-stock`, v);
+        toast(`Moved to Consumables & Stock · ${r.item_code}`);
+        invalidate();
+        router.push(`/stock/${r.item_id}`);
+      }}
+    />
+  );
+}
+
+type Supply = { id: number; kind: "issue" | "return"; reference: string; name: string; item_code: string; photo: string | null; quantity: number; unit: string; note: string | null; at: string };
+
 /** Items issued together show (and are acknowledged) as one entry. */
 function bundle(list: Asset[]) {
   const out: { a: Asset; count: number }[] = [];
@@ -977,17 +1047,22 @@ function bundle(list: Asset[]) {
 export function MyAssets() {
   const toast = useToast();
   const q = useApi<Asset[]>("/api/v1/me/assets");
+  const supplies = useApi<Supply[]>("/api/v1/me/supplies");
   return (
     <PageFrame>
       <Breadcrumbs crumbs={[{ label: "Home", href: "/me" }, { label: "My assets" }]} />
       <h1 className="text-[24px] font-bold tracking-[-0.02em] sm:text-[30px]">My assets</h1>
-      <p className="mt-2 text-[15.5px] text-ink-2">Equipment issued to you. Confirm anything you&apos;ve received.</p>
+      <p className="mt-2 text-[15.5px] text-ink-2">Equipment and supplies issued to you. Confirm anything you&apos;ve received.</p>
       <div className="mt-8">
         <Panel>
           {!q.data ? (
             <SkeletonRows rows={2} />
           ) : q.data.length === 0 ? (
-            <EmptyState icon={Package} title="No assets issued to you" compact />
+            supplies.data?.length ? (
+              <p className="px-5 py-4 text-[13.5px] text-ink-3">No equipment issued to you.</p>
+            ) : (
+              <EmptyState icon={Package} title="No assets issued to you" compact />
+            )
           ) : (
             <ul className="divide-y divide-line">
               {bundle(q.data).map(({ a, count }) => (
@@ -1034,6 +1109,30 @@ export function MyAssets() {
           )}
         </Panel>
       </div>
+      {supplies.data && supplies.data.length > 0 && (
+        <div className="mt-6">
+          <Panel title="Supplies issued to you" meta={`${supplies.data.length}`}>
+            <ul className="divide-y divide-line">
+              {supplies.data.map((m) => (
+                <li key={m.id} className="flex items-center gap-3.5 px-4 py-3 sm:px-5">
+                  <ItemThumb src={m.photo} icon={Boxes} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-bold">{m.name}</span>
+                    <span className="block text-[12.5px] text-ink-3">
+                      {m.kind === "return" ? "Returned" : "Issued"} {fmtDate(m.at)}
+                      {m.note ? ` · ${m.note}` : ""}
+                    </span>
+                  </span>
+                  <span className="tabular shrink-0 text-[15px] font-bold">
+                    {m.kind === "return" ? "−" : ""}
+                    {m.quantity} <span className="text-[12.5px] font-normal text-ink-3">{m.unit}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </div>
+      )}
     </PageFrame>
   );
 }

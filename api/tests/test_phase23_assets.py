@@ -205,3 +205,40 @@ def test_earlier_issues_are_grouped_on_start(users, client):
     # One acknowledgement covers all three.
     eli.post(f"/api/v1/assets/{ids[1]}/acknowledge")
     assert all(admin.get(f"/api/v1/assets/{i}").json()["acknowledged_at"] for i in ids)
+
+
+def test_consumable_moved_to_stock_by_quantity(users):
+    """Clips registered one record per piece become one stock line counted in pieces."""
+    from .test_item_photos import add as upload, jpeg_with_gps
+
+    admin, bea, carlo = users["admin"], users["assistant"], users["carlo"]
+    made = new_asset(admin, name="Clip", category="Other", count=5).json()["created"]
+    for m in made:  # the same photo was saved on every record
+        assert upload(admin, "asset", m["id"], jpeg_with_gps()).status_code == 201
+    admin.post(f"/api/v1/assets/{made[2]['id']}/assign", {"employee_id": me_id(carlo), "count": 3})
+    plan = admin.get(f"/api/v1/assets/{made[0]['id']}/to-stock").json()
+    assert plan["count"] == 5 and plan["in_stock"] == 2 and plan["issued"][0]["quantity"] == 3 and plan["blocked"] is None
+    assert carlo.post(f"/api/v1/assets/{made[0]['id']}/to-stock", {"location": "Supply cabinet"}).status_code == 403
+    assert bea.post(f"/api/v1/assets/{made[0]['id']}/to-stock", {"location": "Supply cabinet"}).status_code == 403  # needs inventory control
+    r = admin.post(f"/api/v1/assets/{made[0]['id']}/to-stock", {"location": "Supply cabinet", "unit": "pc"})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["moved"] == 5 and out["issued"] == 3 and out["item_code"].startswith("GPI-CS-")
+    item = admin.get(f"/api/v1/inventory/items/{out['item_id']}").json()
+    assert item["on_hand"] == 2 and item["unit"] == "pc" and item["photo"]
+    kinds = [(m["kind"], m["quantity"], (m["issued_to"] or {}).get("id")) for m in item["movements"]]
+    assert kinds == [("issue", -3, me_id(carlo)), ("stock_in", 5, None)]
+    assert len(admin.get(f"/api/v1/photos?owner_type=inventory_item&owner_id={out['item_id']}").json()) == 1  # duplicates kept once
+    assert [x for x in admin.get("/api/v1/assets?q=Clip&page_size=100").json()["items"] if x["name"] == "Clip"] == []  # no longer per-piece records
+    assert admin.get(f"/api/v1/assets/{made[0]['id']}").status_code == 404
+    mine = carlo.get("/api/v1/me/supplies").json()
+    assert mine[0]["name"] == "Clip" and mine[0]["quantity"] == 3 and mine[0]["unit"] == "pc"
+    assert [a for a in carlo.get("/api/v1/me/assets").json() if a["name"] == "Clip"] == []
+    # Later issues are by quantity on the stock card.
+    d = admin.post(f"/api/v1/inventory/items/{out['item_id']}/move", {"kind": "issue", "quantity": 2, "issued_to_id": me_id(carlo)}).json()
+    assert d["on_hand"] == 0 and carlo.get("/api/v1/me/supplies").json()[0]["quantity"] == 2
+    # Something under repair stays an asset.
+    lap = new_asset(admin, name="Repair laptop").json()
+    admin.post(f"/api/v1/assets/{lap['id']}/repairs", {"issue": "Screen"})
+    assert admin.get(f"/api/v1/assets/{lap['id']}/to-stock").json()["blocked"]
+    assert admin.post(f"/api/v1/assets/{lap['id']}/to-stock", {"location": "X"}).status_code == 409

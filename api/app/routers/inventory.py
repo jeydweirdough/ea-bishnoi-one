@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, File, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_, select
+from sqlalchemy import delete as sa_delete, or_, select, update as sa_update
 from sqlalchemy.exc import IntegrityError
 
 from ..core import admin_ids, audit, bad_request, conflict, forbidden, next_reference, not_found, notify, now
@@ -25,7 +25,6 @@ from .attachments import storage_dir
 from .photos import photo_url, process as clean_photo
 from ..workflow import event as request_event, is_operator
 
-from ..asset_ids import ensure_serial
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
@@ -183,7 +182,7 @@ async def create_item(body: ItemIn, principal: Staff, session: Session) -> dict:
     dup = await session.execute(select(InventoryItem.id).where(InventoryItem.company_id == cid, InventoryItem.item_code == body.item_code, InventoryItem.location == body.location))
     if dup.first():
         raise conflict(f"{body.item_code} already has a stock line at {body.location}")
-    i = InventoryItem(company_id=cid, on_hand=0, reserved=0, **body.model_dump(exclude={"company_id", "opening_quantity"}))
+    i = InventoryItem(company_id=cid, on_hand=0, reserved=0, **body.model_dump(exclude={"company_id", "opening_quantity", "serialized_on_issue"}))
     session.add(i)
     try:
         await session.flush()
@@ -232,7 +231,7 @@ async def update_item(item_id: int, body: ItemPatch, principal: Staff, session: 
         if body.location != i.location and i.on_hand:
             raise bad_request({"message": "Use a transfer to move stock to another location", "fields": {"location": "Use transfer"}})
     changed = {}
-    for k, v in body.model_dump(exclude={"company_id", "version", "opening_quantity"}).items():
+    for k, v in body.model_dump(exclude={"company_id", "version", "opening_quantity", "serialized_on_issue"}).items():
         if getattr(i, k) != v:
             changed[k] = str(v)
             setattr(i, k, v)
@@ -247,7 +246,7 @@ class MoveIn(BaseModel):
     kind: Literal["stock_in", "issue", "use", "return", "transfer", "adjustment", "write_off"]
     quantity: int = Field(..., ge=1, le=10_000_000)
     direction: Literal["add", "remove"] = "add"  # adjustments only
-    issued_to_id: int | None = None
+    issued_to_id: int | None = None  # issue: who receives it; return: who brought it back
     to_location: str | None = Field(None, max_length=120)
     reason: str | None = Field(None, max_length=2000)
 
@@ -271,7 +270,6 @@ async def move_stock(item_id: int, body: MoveIn, principal: Staff, session: Sess
             raise conflict(f"Only {i.available} {i.unit} available ({i.reserved} reserved)")
         emp = await employee_in(session, body.issued_to_id, i.company_id, "issued_to_id")
         await move(session, principal, i, "issue", -body.quantity, reason=reason, issued_to_id=emp.id)
-        await issue_assets(session, principal, i, body.quantity, emp.id, None)
     elif body.kind == "use":
         if body.quantity > i.available:
             raise conflict(f"Only {i.available} {i.unit} available ({i.reserved} reserved)")
@@ -296,7 +294,10 @@ async def move_stock(item_id: int, body: MoveIn, principal: Staff, session: Sess
         await move(session, principal, i, "adjustment", body.quantity if body.direction == "add" else -body.quantity, reason=reason)
     elif body.kind == "write_off":
         await move(session, principal, i, "write_off", -body.quantity, reason=reason)
-    else:  # stock_in, return
+    elif body.kind == "return":
+        by = (await employee_in(session, body.issued_to_id, i.company_id, "issued_to_id")).id if body.issued_to_id else None
+        await move(session, principal, i, "return", body.quantity, reason=reason, issued_to_id=by)
+    else:  # stock_in
         await move(session, principal, i, body.kind, body.quantity, reason=reason)
     await session.commit()
     return await get_item(i.id, principal, session)
@@ -368,26 +369,79 @@ async def get_proof(photo_id: int, principal: Staff, session: Session, size: Lit
     return FileResponse(path, media_type="image/jpeg", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
 
 
-async def issue_assets(session, principal: Principal, item: InventoryItem, qty: int, holder_id: int, request: Request | None):
-    """Serialized-on-issue items become individual asset records held by the recipient."""
-    if not item.serialized_on_issue:
+async def rehome_files(session, asset_ids: list[int], item: InventoryItem) -> None:
+    """Photos and files of asset records go to the stock item. The same photo saved on several records is kept once."""
+    from .attachments import storage_dir
+    from .photos import MAX_PHOTOS, PURPOSE as PHOTO
+
+    if not asset_ids:
         return
-    ref = await next_reference(session, "ISS")  # one issuance: one acknowledgement for the set
-    made = []
-    for _ in range(qty):
-        a = Asset(
-            reference=await next_reference(session, "AST"), company_id=item.company_id, name=item.name, category="IT equipment" if item.category == "Equipment" else "Other",
-            brand=item.brand, model=item.model, quantity=1, unit=item.unit, condition=AssetCondition.brand_new, status=AssetStatus.assigned, holder_id=holder_id,
-            issued_by_id=principal.id, date_issued=date.today(), purchase_reference=item.item_code, request_id=request.id if request else None, issue_ref=ref,
+    atts = (await session.execute(select(Attachment).where(Attachment.owner_type == "asset", Attachment.owner_id.in_(asset_ids)).order_by(Attachment.id))).scalars().all()
+    have = {x.sha256 for x in (await session.execute(select(Attachment).where(Attachment.owner_type == "inventory_item", Attachment.owner_id == item.id))).scalars()}
+    photos = len((await session.execute(select(Attachment.id).where(Attachment.owner_type == "inventory_item", Attachment.owner_id == item.id, Attachment.purpose == PHOTO))).all())
+    for att in atts:
+        if att.sha256 in have or (att.purpose == PHOTO and photos >= MAX_PHOTOS):
+            for k in (att.storage_key, f"{att.storage_key}_t"):
+                (storage_dir() / k).unlink(missing_ok=True)
+            await session.delete(att)
+            continue
+        have.add(att.sha256)
+        att.owner_type, att.owner_id = "inventory_item", item.id
+        if att.purpose == PHOTO:
+            photos += 1
+            if item.photo_id is None:
+                item.photo_id = att.id
+
+
+async def drop_assets(session, assets: list[Asset]) -> None:
+    for a in assets:
+        await session.execute(sa_delete(AssetEvent).where(AssetEvent.asset_id == a.id))
+        await session.delete(a)
+
+
+async def fold_stock_assets(session) -> int:
+    """One record per counted item: the stock line.
+
+    Issuing from stock used to be able to also create one asset record per piece ("Register as an asset
+    when issued"). Those records duplicated the stock card, and returning one never reached the stock.
+    Each such record is folded back: if it is still with someone, the stock card already shows it as
+    issued, so the record goes; if it came back, the stock card gets the return (+1, by that person).
+    Photos and files move to the stock item; the old references stay in the audit log.
+    """
+    from types import SimpleNamespace
+
+    from ..models_ops import AssetRepair
+
+    evs = (await session.execute(select(AssetEvent).where(AssetEvent.type == "assigned", AssetEvent.message.like("Issued from inventory %")).order_by(AssetEvent.id))).scalars().all()
+    folded = 0
+    for ev in evs:
+        a = await session.get(Asset, ev.asset_id)
+        if a is None:
+            continue
+        msg = ev.message or ""
+        code = msg.split(" ")[3] if len(msg.split(" ")) > 3 else None
+        loc = msg.split("(", 1)[1].split(")", 1)[0] if "(" in msg else None
+        items = (await session.execute(select(InventoryItem).where(InventoryItem.company_id == a.company_id, InventoryItem.item_code == code))).scalars().all()
+        item = next((x for x in items if x.location == loc), items[0] if items else None)
+        if item is None or (await session.execute(select(AssetRepair.id).where(AssetRepair.asset_id == a.id).limit(1))).first():
+            continue
+        ret = None
+        if not a.holder_id and a.status != AssetStatus.retired:
+            ret = (await session.execute(select(AssetEvent).where(AssetEvent.asset_id == a.id, AssetEvent.type == "returned").order_by(AssetEvent.id.desc()).limit(1))).scalar_one_or_none()
+            actor = SimpleNamespace(id=(ret.actor_id if ret and ret.actor_id else ev.actor_id or a.issued_by_id))
+            m = await move(session, actor, item, "return", 1, reason="Returned" + (f": {ret.message}" if ret and ret.message else ""), issued_to_id=ret.from_holder_id if ret else None)
+            if ret:
+                m.at = ret.at
+        await rehome_files(session, [a.id], item)
+        await audit(
+            session, actor_id=None, action="inventory.asset_record_folded", entity_type="inventory_item", entity_id=item.id, entity_ref=item.item_code, company_id=item.company_id,
+            data={"asset": a.reference, "serial": a.serial_number, "holder_id": a.holder_id, "returned": bool(ret)},
         )
-        await ensure_serial(session, a)
-        session.add(a)
-        await session.flush()
-        session.add(AssetEvent(asset_id=a.id, type="assigned", message=f"Issued from inventory {item.item_code} ({item.location}) · {ref}", actor_id=principal.id, to_holder_id=holder_id, data={"issue_ref": ref, "items": qty}))
-        made.append(a)
-    if made:
-        what = f"{item.name} × {len(made)}" if len(made) > 1 else item.name
-        await notify(session, {holder_id}, kind="task_assignment", title=f"Please acknowledge: {what}", body=f"{ref} was issued to you. Confirm you received {'them' if len(made) > 1 else 'it'}.", link=f"/asset/{made[0].id}")
+        await drop_assets(session, [a])
+        folded += 1
+    await session.execute(sa_update(InventoryItem).where(InventoryItem.serialized_on_issue.is_(True)).values(serialized_on_issue=False))
+    await session.commit()
+    return folded
 
 
 # ------------------------------------------------------------------ requests to fill (reserve / issue)
@@ -476,7 +530,6 @@ async def reservation_action(res_id: int, action: Literal["issue", "release"], p
         await move(session, principal, i, "issue", -r.quantity, request_id=req.id, issued_to_id=req.requester_id, reason=f"Issued for {req.reference}")
         ri = await session.get(RequestItem, r.request_item_id)
         ri.received_quantity = min(ri.quantity, ri.received_quantity + r.quantity)
-        await issue_assets(session, principal, i, r.quantity, req.requester_id, req)
         done = all(x.received_quantity >= x.quantity for x in req.items)
         req.fulfillment_status = "Issued from stock" if done else "Partially issued"
         req.version += 1

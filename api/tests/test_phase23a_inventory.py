@@ -73,12 +73,64 @@ def test_reserve_and_issue_from_request(users):
     assert d["fulfillment_status"] == "Issued from stock" and d["items"][0]["received_quantity"] == 5
 
 
-def test_serialized_issue_creates_assets(users):
+def test_stock_is_the_one_record_for_counted_items(users, client):
+    """Issuing from stock never makes per-piece asset records; old ones are folded back into the stock card."""
+    from sqlalchemy import select
+
+    from app.asset_ids import ensure_serial
+    from app.core import next_reference
+    from app.db import session_factory
+    from app.models_ops import Asset, AssetEvent, AssetStatus
+    from app.models_ops3 import InventoryItem
+    from app.routers.inventory import fold_stock_assets
+
     admin, eli = users["admin"], users["eli"]
-    i = item(admin, item_code="MON-24", name="Monitor 24in", category="Equipment", opening_quantity=3, serialized_on_issue=True).json()
-    admin.post(f"/api/v1/inventory/items/{i['id']}/move", {"kind": "issue", "quantity": 2, "issued_to_id": me_id(eli)})
-    mine = eli.get("/api/v1/me/assets").json()
-    assert len([a for a in mine if a["name"] == "Monitor 24in"]) == 2
+    i = item(admin, item_code="CLIP-B", name="Binder clip", category="Supplies", location="Room 301", opening_quantity=10, serialized_on_issue=True).json()
+    assert i["serialized_on_issue"] is False  # the old option is gone
+    d = admin.post(f"/api/v1/inventory/items/{i['id']}/move", {"kind": "issue", "quantity": 5, "issued_to_id": me_id(eli), "reason": "Sample"}).json()
+    assert d["on_hand"] == 5
+    assert [a for a in eli.get("/api/v1/me/assets").json() if a["name"] == "Binder clip"] == []  # no per-piece records
+
+    # What the old option did: one asset record per piece issued.
+    emp = me_id(eli)
+
+    async def old_way():
+        async with session_factory()() as s:
+            it = (await s.execute(select(InventoryItem).where(InventoryItem.id == i["id"]))).scalar_one()
+            it.serialized_on_issue = True
+            ids = []
+            for _ in range(5):
+                a = Asset(reference=await next_reference(s, "AST"), company_id=it.company_id, name=it.name, category="Other", quantity=1, unit="pc", status=AssetStatus.assigned, holder_id=emp, purchase_reference=it.item_code)
+                await ensure_serial(s, a)
+                s.add(a)
+                await s.flush()
+                s.add(AssetEvent(asset_id=a.id, type="assigned", message=f"Issued from inventory {it.item_code} ({it.location})", actor_id=a.holder_id, to_holder_id=emp))
+                ids.append(a.id)
+            await s.commit()
+            return ids
+
+    ids = client.portal.call(old_way)
+    # One came back through the asset page, which never reached the stock card.
+    assert admin.post(f"/api/v1/assets/{ids[0]}/return", {"condition": "used", "note": "Sample return"}).status_code == 200
+    assert admin.get(f"/api/v1/inventory/items/{i['id']}").json()["on_hand"] == 5
+
+    async def fold():
+        async with session_factory()() as s:
+            return await fold_stock_assets(s)
+
+    assert client.portal.call(fold) == 5
+    d = admin.get(f"/api/v1/inventory/items/{i['id']}").json()
+    assert d["on_hand"] == 6 and d["serialized_on_issue"] is False
+    back = d["movements"][0]
+    assert back["kind"] == "return" and back["quantity"] == 1 and back["issued_to"]["id"] == me_id(eli) and "Sample return" in back["reason"]
+    assert all(admin.get(f"/api/v1/assets/{x}").status_code == 404 for x in ids)
+    assert client.portal.call(fold) == 0  # only once
+    # The person's supplies: 5 issued, 1 returned.
+    mine = [(m["kind"], m["quantity"]) for m in eli.get("/api/v1/me/supplies").json() if m["name"] == "Binder clip"]
+    assert mine == [("return", 1), ("issue", 5)]
+    # Returns on the stock card say who brought it back.
+    r = admin.post(f"/api/v1/inventory/items/{i['id']}/move", {"kind": "return", "quantity": 2, "issued_to_id": me_id(eli)}).json()
+    assert r["on_hand"] == 8 and r["movements"][0]["issued_to"]["id"] == me_id(eli)
 
 
 def test_reorder_and_counts(users):

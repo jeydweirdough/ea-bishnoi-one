@@ -773,3 +773,109 @@ async def asset_events(principal: Staff, session: Session, type: list[str] = Que
         ],
         "total": total, "page": page, "page_size": page_size,
     }
+
+
+# ------------------------------------------------------------------ consumables registered as assets
+# Things counted in pieces (clips, pens, tumblers) don't need one record and serial per piece.
+# This moves every record of the item into Consumables & Stock as one stock line: the pieces in stock
+# become its balance, and pieces already issued are recorded as issued to their holders, by quantity.
+
+
+class ToStockIn(BaseModel):
+    unit: str = Field("pc", min_length=1, max_length=40)
+    location: str = Field(..., min_length=1, max_length=120)
+
+
+async def _same_item(session, a: Asset) -> list[Asset]:
+    rows = (await session.execute(select(Asset).where(Asset.company_id == a.company_id, Asset.category == a.category, Asset.status != AssetStatus.retired).order_by(Asset.id))).scalars().all()
+    key = a.name.strip().lower()
+    return [x for x in rows if x.name.strip().lower() == key]
+
+
+async def _to_stock_plan(session, a: Asset) -> dict:
+    group = await _same_item(session, a)
+    ids = [x.id for x in group]
+    blocked = None
+    if any(x.status == AssetStatus.under_repair for x in group):
+        blocked = "One of them is under repair. Finish the repair first."
+    elif (await session.execute(select(AssetRepair.id).where(AssetRepair.asset_id.in_(ids)).limit(1))).first():
+        blocked = "One of them has a repair history, so it stays an asset."
+    holders: dict[int, dict] = {}
+    for x in group:
+        if x.holder_id:
+            h = holders.setdefault(x.holder_id, {"holder": person(x.holder), "quantity": 0})
+            h["quantity"] += 1
+    return {
+        "group": group,
+        "out": {
+            "name": a.name, "count": len(group), "in_stock": sum(1 for x in group if not x.holder_id),
+            "issued": list(holders.values()), "location": next((x.location for x in group if x.location), None), "blocked": blocked,
+        },
+    }
+
+
+@router.get("/assets/{asset_id}/to-stock")
+async def to_stock_preview(asset_id: int, principal: Staff, session: Session) -> dict:
+    a = await scoped(session, Asset, asset_id, principal)
+    return (await _to_stock_plan(session, a))["out"]
+
+
+@router.post("/assets/{asset_id}/to-stock")
+async def to_stock(asset_id: int, body: ToStockIn, principal: Staff, session: Session) -> dict:
+    from ..models_ops3 import InventoryItem
+    from .inventory import can_adjust, drop_assets, move, next_item_code, rehome_files
+
+    if not can_adjust(principal):
+        raise forbidden("Moving items into Consumables & Stock needs Admin or delegated inventory control")
+    a = await scoped(session, Asset, asset_id, principal)
+    plan = await _to_stock_plan(session, a)
+    if plan["out"]["blocked"]:
+        raise conflict(plan["out"]["blocked"])
+    group: list[Asset] = plan["group"]
+    location = body.location.strip()
+    # Join an existing stock line of the same item at that location, or start one.
+    item = None
+    for i in (await session.execute(select(InventoryItem).where(InventoryItem.company_id == a.company_id, InventoryItem.location == location))).scalars():
+        if i.name.strip().lower() == a.name.strip().lower():
+            item = i
+            break
+    if item is None:
+        item = InventoryItem(
+            company_id=a.company_id, item_code=await next_item_code(session, a.company_id, "Consumables"), name=a.name.strip(), category="Consumables",
+            brand=a.brand, model=a.model, unit=body.unit.strip(), location=location, on_hand=0, reserved=0, reorder_level=0, reorder_quantity=0,
+        )
+        session.add(item)
+        await session.flush()
+    first, last = group[0].reference, group[-1].reference
+    await move(session, principal, item, "stock_in", len(group), reason=f"Moved from the asset registry ({first}{' to ' + last if len(group) > 1 else ''})")
+    by_holder: dict[int, list[Asset]] = {}
+    for x in group:
+        if x.holder_id:
+            by_holder.setdefault(x.holder_id, []).append(x)
+    for holder_id, xs in by_holder.items():
+        refs = sorted({x.issue_ref for x in xs if x.issue_ref})
+        note = "Issued earlier" + (f" ({', '.join(refs)})" if refs else "")
+        await move(session, principal, item, "issue", -len(xs), reason=note, issued_to_id=holder_id)
+    # Photos and files go with it. The same photo saved on every record is kept once.
+    await rehome_files(session, [x.id for x in group], item)
+    await audit(
+        session, actor_id=principal.id, action="asset.moved_to_stock", entity_type="inventory_item", entity_id=item.id, entity_ref=item.item_code, company_id=item.company_id,
+        data={"assets": [x.reference for x in group], "serials": [x.serial_number for x in group], "issued": {str(k): len(v) for k, v in by_holder.items()}},
+    )
+    await drop_assets(session, group)
+    await session.commit()
+    return {"item_id": item.id, "item_code": item.item_code, "moved": len(group), "issued": sum(len(v) for v in by_holder.values())}
+
+
+@router.get("/me/supplies")
+async def my_supplies(principal: CurrentPrincipal, session: Session) -> list[dict]:
+    """Consumables handed to me and brought back, by quantity (from the stock cards)."""
+    from ..models_ops3 import InventoryItem, StockMovement
+
+    rows = (await session.execute(select(StockMovement).where(StockMovement.issued_to_id == principal.id, StockMovement.kind.in_(["issue", "return"])).order_by(StockMovement.id.desc()).limit(100))).scalars().all()
+    items = {i.id: i for i in (await session.execute(select(InventoryItem).where(InventoryItem.id.in_([m.item_id for m in rows] or [0])))).scalars()}
+    return [
+        {"id": m.id, "reference": m.reference, "name": items[m.item_id].name, "item_code": items[m.item_id].item_code, "photo": photo_url(items[m.item_id].photo_id),
+         "kind": m.kind, "quantity": abs(m.quantity), "unit": items[m.item_id].unit, "note": m.reason, "at": iso(m.at), "by": person(m.actor)}
+        for m in rows
+    ]

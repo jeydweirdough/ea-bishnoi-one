@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { api, invalidate, useApi, type ApiError } from "@/lib/api";
-import { Button, Field, Input, Select, Textarea } from "./controls";
+import { Button, Field, Input, Segmented, Select, Textarea } from "./controls";
 import { Dialog, useToast } from "./feedback";
 import { DocumentReader, ReadBadge, VERIFY_BELOW, type ScanKind, type ScanResult } from "./document-reader";
 import { PendingPhotos, shrink, uploadPhoto, type PhotoOwner } from "./photos";
@@ -13,7 +13,7 @@ import { cn } from "@/lib/cn";
 export type FieldDef = {
   name: string;
   label: string;
-  type?: "text" | "textarea" | "number" | "money" | "date" | "select" | "person" | "department" | "vehicle";
+  type?: "text" | "textarea" | "number" | "money" | "date" | "select" | "choice" | "person" | "department" | "vehicle";
   options?: (string | { value: string; label: string })[];
   required?: boolean;
   hint?: string;
@@ -24,7 +24,11 @@ export type FieldDef = {
   min?: string;
   /** Person fields: allow adding someone who is not in the directory. Defaults on for the person a record is about. */
   allowAdd?: boolean;
+  /** Only shown (and sent) when this returns true for the current values. */
+  show?: (v: Values) => boolean;
 };
+
+const visible = (f: FieldDef, v: Values) => !f.show || f.show(v);
 
 /** Fields that name the person a record is about (not a staff role), so new people may be added there. */
 const SUBJECT_PERSON = new Set(["passenger_id", "guest_id", "employee_id", "assigned_driver_id", "assigned_user_id", "custodian_id", "issued_to_id"]);
@@ -35,6 +39,7 @@ export type Values = Record<string, string>;
 export function toPayload(fields: FieldDef[], v: Values) {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
+    if (!visible(f, v)) continue;
     const raw = (v[f.name] ?? "").trim();
     if (raw === "") out[f.name] = null;
     else if (f.type === "number" || f.type === "person" || f.type === "department" || f.type === "vehicle") out[f.name] = Number(raw);
@@ -59,6 +64,15 @@ function Control({ f, value, onChange, invalid, draft }: { f: FieldDef; value: s
   switch (f.type) {
     case "textarea":
       return <Textarea id={id} rows={3} value={value} onChange={(e) => onChange(e.target.value)} invalid={invalid} placeholder={f.placeholder} />;
+    case "choice":
+      return (
+        <Segmented
+          label={f.label}
+          value={value}
+          onChange={onChange}
+          options={(f.options ?? []).map((o) => (typeof o === "string" ? { value: o, label: o } : o))}
+        />
+      );
     case "select":
       return (
         <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} invalid={invalid}>
@@ -129,8 +143,9 @@ function VehiclePicker({ id, value, onChange, invalid }: { id: string; value: st
 
 /** Field grid with essentials first and optional fields under "More options". */
 export function RecordFields({ fields, values, setValues, errors, marks = {}, personDraft }: { fields: FieldDef[]; values: Values; setValues: (v: Values) => void; errors: Record<string, string>; marks?: Record<string, "read" | "verify">; personDraft?: PersonDraft | null }) {
-  const main = fields.filter((f) => !f.more);
-  const extra = fields.filter((f) => f.more);
+  const shown = fields.filter((f) => visible(f, values));
+  const main = shown.filter((f) => !f.more);
+  const extra = shown.filter((f) => f.more);
   const hasExtraValue = extra.some((f) => values[f.name] || errors[f.name]);
   const [more, setMore] = useState(hasExtraValue);
   const [seen, setSeen] = useState(hasExtraValue);
@@ -238,14 +253,14 @@ export function RecordDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const missing = fields.some((f) => f.required && !(values[f.name] ?? "").trim());
+  const missing = fields.some((f) => f.required && visible(f, values) && !(values[f.name] ?? "").trim());
 
   async function submit() {
     setBusy(true);
     setErrors({});
     setMessage(undefined);
     try {
-      const saved = (await onSubmit(toPayload(fields, values))) as { id?: number; created?: { id: number }[] } | undefined;
+      const saved = (await onSubmit(toPayload(fields, values))) as { id?: number; created?: { id: number }[]; photo_owner?: PhotoOwner } | undefined;
       const ownerId = scan?.ownerId ?? saved?.id;
       if (file && scan?.attachTo && ownerId) {
         const fd = new FormData();
@@ -257,7 +272,7 @@ export function RecordDialog({
       if (photos && pending.length && saved?.id) {
         // Several identical items registered at once share the photos (up to 20 records).
         const owners = saved.created?.length ? saved.created.slice(0, 20).map((c) => c.id) : [saved.id];
-        for (const id of owners) for (const f of pending) await uploadPhoto(photos, id, f).catch((e: ApiError) => toast(`Saved, but a photo was not added: ${e.message}`, "error"));
+        for (const id of owners) for (const f of pending) await uploadPhoto(saved.photo_owner ?? photos, id, f).catch((e: ApiError) => toast(`Saved, but a photo was not added: ${e.message}`, "error"));
         invalidate();
       }
       const showProof = proof && (!proof.when || proof.when(values));

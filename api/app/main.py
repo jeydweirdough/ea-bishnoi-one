@@ -50,6 +50,10 @@ async def lifespan(app: FastAPI):
 
         if n := await backfill_serials(s):
             log.info("gave %d existing assets an automatic serial number", n)
+        from .routers.inventory import fold_stock_assets
+
+        if n := await fold_stock_assets(s):
+            log.info("folded %d asset records made by stock issues back into their stock lines", n)
         from .asset_ids import backfill_issue_refs
 
         if n := await backfill_issue_refs(s):

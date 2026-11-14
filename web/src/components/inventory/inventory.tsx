@@ -84,14 +84,13 @@ function itemFields(o?: Options, editing = false): FieldDef[] {
     { name: "brand", label: "Brand", more: true, half: true },
     { name: "model", label: "Model", more: true, half: true },
     { name: "supplier", label: "Preferred supplier", more: true, half: true },
-    { name: "serialized_on_issue", label: "Register as an asset when issued", type: "select", more: true, half: true, options: [{ value: "false", label: "No" }, { value: "true", label: "Yes — one asset per unit" }] },
     ...(editing ? [{ name: "status", label: "Status", type: "select", more: true, half: true, options: [{ value: "active", label: "Active" }, { value: "discontinued", label: "Discontinued" }] } as FieldDef] : []),
     { name: "remarks", label: "Remarks", type: "textarea", more: true },
   ];
 }
 
 function normalize(p: Record<string, unknown>) {
-  return { ...p, serialized_on_issue: p.serialized_on_issue === "true", opening_quantity: p.opening_quantity ?? 0, reorder_level: p.reorder_level ?? 0, reorder_quantity: p.reorder_quantity ?? 0, unit: p.unit ?? "pc", category: p.category ?? "Equipment" };
+  return { ...p, opening_quantity: p.opening_quantity ?? 0, reorder_level: p.reorder_level ?? 0, reorder_quantity: p.reorder_quantity ?? 0, unit: p.unit ?? "pc", category: p.category ?? "Equipment" };
 }
 
 type View = "stock" | "fill" | "counts" | "moves";
@@ -141,7 +140,7 @@ export function InventoryPage() {
         title="Add a consumable or stock item"
         description="For things counted by quantity, like bond paper, toner or cleaning supplies. The opening quantity is recorded as the first movement."
         fields={itemFields(o.data)}
-        initial={{ category: "Consumables", unit: "pc", opening_quantity: "0", reorder_level: "0", serialized_on_issue: "false" }}
+        initial={{ category: "Consumables", unit: "pc", opening_quantity: "0", reorder_level: "0" }}
         submitLabel="Add item"
         photos="inventory_item"
         proof={{ movementId: (s) => (s as { opening_movement_id?: number | null })?.opening_movement_id, when: (v) => Number(v.opening_quantity || 0) > 0 }}
@@ -524,7 +523,7 @@ function MoveRow({ m, showItem }: { m: Move; showItem?: boolean }) {
         </span>
         <span className="block text-[12.5px] text-ink-3">
           {m.actor.name} · {fmtDateTime(m.at)}
-          {m.issued_to ? ` · to ${m.issued_to.name}` : ""}
+          {m.issued_to ? ` · ${m.kind === "return" ? "from" : "to"} ${m.issued_to.name}` : ""}
           {m.reason ? ` · ${m.reason}` : ""}
         </span>
         {proofs.length > 0 && (
@@ -567,7 +566,7 @@ export function StockItemView({ id }: { id: number }) {
     issue: { title: "Issue stock", label: "Issue", fields: [{ name: "issued_to_id", label: "Issue to", type: "person", required: true, placeholder: "Choose a person" }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true, hint: `${i.available} available` }, { name: "reason", label: "Note", half: true }] },
     use: { title: "Record use", label: "Record use", fields: [{ name: "quantity", label: "Quantity used", type: "number", required: true, half: true, hint: `${i.available} available` }, { name: "reason", label: "Used for", required: true, half: true, placeholder: "e.g. Pantry, printing, cleaning" }] },
     transfer: { title: "Transfer to another location", label: "Transfer", fields: [{ name: "to_location", label: "To location", required: true, half: true }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Note" }] },
-    return: { title: "Return to stock", label: "Return", fields: [{ name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Returned by / note", half: true }] },
+    return: { title: "Return to stock", label: "Return", fields: [{ name: "issued_to_id", label: "Returned by", type: "person", placeholder: "Choose a person" }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Note", half: true }] },
     adjustment: { title: "Adjust count", label: "Adjust", fields: [{ name: "direction", label: "Direction", type: "select", required: true, half: true, options: [{ value: "add", label: "Add" }, { value: "remove", label: "Remove" }] }, { name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Reason", type: "textarea", required: true }] },
     write_off: { title: "Write off", label: "Write off", fields: [{ name: "quantity", label: "Quantity", type: "number", required: true, half: true }, { name: "reason", label: "Reason (damaged, lost, expired…)", type: "textarea", required: true }] },
   };
@@ -664,7 +663,6 @@ export function StockItemView({ id }: { id: number }) {
                 ["Value", i.unit_cost_php ? peso(i.value_php) : "No unit cost"],
                 ["Supplier", i.supplier ?? ""],
                 ["Reorder quantity", i.reorder_quantity ? `${i.reorder_quantity} ${i.unit}` : ""],
-                ["Issued as assets", i.serialized_on_issue ? "Yes" : ""],
                 ["Last counted", i.last_counted_on ?? ""],
               ]
                 .filter(([, v]) => v)
@@ -715,7 +713,7 @@ export function StockItemView({ id }: { id: number }) {
         onClose={() => setDialog(null)}
         title="Edit stock item"
         fields={ef}
-        initial={{ ...fromRecord(ef, i as unknown as Record<string, unknown>), serialized_on_issue: String(i.serialized_on_issue) }}
+        initial={fromRecord(ef, i as unknown as Record<string, unknown>)}
         onSubmit={async (p) => {
           await api(`/api/v1/inventory/items/${i.id}`, { method: "PATCH", json: { ...normalize(p), version: i.version } });
           toast("Saved");
