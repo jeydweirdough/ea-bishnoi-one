@@ -190,7 +190,7 @@ export function ContractsList({ view = "all" }: { view?: ContractView }) {
         fields={fields}
         initial={{ contract_type: type ?? "office_lease", renewal_notice_days: "60" }}
         submitLabel="Add"
-        scan={{ kind: "contract", attachTo: "contract" }}
+        attach={{ ownerType: "contract", title: "Attach the signed contract" }}
         onSubmit={async (p) => {
           const c = await post<Contract>("/api/v1/contracts", { ...p, renewal_notice_days: p.renewal_notice_days ?? 60 });
           toast(`Added · ${c.reference}`);
@@ -501,7 +501,7 @@ export function ContractDetailView({ id }: { id: number }) {
           { name: "notes", label: "Notes", type: "textarea", more: true },
         ]}
         submitLabel="Save renewal"
-        scan={{ kind: "contract", attachTo: "contract" }}
+        attach={{ ownerType: "contract", title: "Attach the signed contract" }}
         onSubmit={async (p) => {
           const n = await post<Contract>(`/api/v1/contracts/${c.id}/renew`, p);
           toast(`Renewed · ${n.reference}`);

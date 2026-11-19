@@ -251,7 +251,7 @@ export function VehiclesPage({ view = "all" }: { view?: "all" | "due" }) {
         fields={vehicleFields(o.data)}
         initial={{ vehicle_type: "Van", status: "active" }}
         submitLabel="Add vehicle"
-        scan={{ kind: "vehicle", attachTo: "vehicle" }}
+        attach={{ ownerType: "vehicle", title: "Attach the OR/CR or registration" }}
         photos="vehicle"
         onSubmit={async (p) => {
           const v = await post<Vehicle>("/api/v1/fleet/vehicles", p);
@@ -339,7 +339,7 @@ function DueList() {
         fields={fields}
         initial={renewing?.kind === "pms" ? { kind: "pms", status: "done", service_date: new Date().toISOString().slice(0, 10) } : undefined}
         submitLabel={renewing?.kind === "pms" ? "Save" : "Save renewal"}
-        scan={renewing && renewing.kind !== "pms" ? { kind: "vehicle_renewal", attachTo: "vehicle", ownerId: renewing.vehicle.id } : undefined}
+        attach={renewing && renewing.kind !== "pms" ? { ownerType: "vehicle", ownerId: renewing.vehicle.id, title: "Attach the new OR or policy" } : undefined}
         onSubmit={async (p) => {
           if (renewing!.kind === "pms") {
             await post(`/api/v1/fleet/vehicles/${renewing!.vehicle.id}/services`, p);
@@ -471,7 +471,6 @@ function FuelAccounts({ vehicle, cards, rfid, onChange }: { vehicle: VehicleMini
         fields={cardFields}
         initial={{ provider: "Shell", billing_cycle: "monthly" }}
         submitLabel="Add card"
-        scan={{ kind: "fleet_card" }}
         onSubmit={async (p) => {
           await post("/api/v1/fleet/cards", { ...p, vehicle_id: vehicle?.id ?? null, provider: p.provider ?? "Shell", billing_cycle: p.billing_cycle ?? "monthly" });
           done("Fleet card added");
@@ -861,7 +860,7 @@ export function VehicleDetailView({ id }: { id: number }) {
         title={dialog === "insurance" ? "Record insurance renewal" : "Record registration renewal"}
         fields={renewFields}
         submitLabel="Save renewal"
-        scan={{ kind: "vehicle_renewal", attachTo: "vehicle", ownerId: v.id }}
+        attach={{ ownerType: "vehicle", ownerId: v.id, title: "Attach the new OR or policy" }}
         onSubmit={async (p) => {
           await post(`/api/v1/fleet/vehicles/${v.id}/renew`, { ...p, kind: dialog });
           toast("Renewal recorded");

@@ -272,7 +272,6 @@ export function CardsPage({ view = "all" }: { view?: "all" | "expiring" }) {
         fields={CARD_FIELDS}
         initial={{ card_type: "credit" }}
         submitLabel="Add card"
-        scan={{ kind: "corporate_card" }}
         onSubmit={async (p) => {
           await post("/api/v1/banking/cards", { ...p, card_type: p.card_type ?? "credit" });
           toast("Card added");

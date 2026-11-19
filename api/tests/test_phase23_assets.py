@@ -264,3 +264,31 @@ def test_asset_history_entries_take_photo_proof(users):
     assert carlo.c.get(one["proofs"][0]["thumb"], headers=carlo.h).status_code == 200
     assert eli.c.get(one["proofs"][0]["thumb"], headers=eli.h).status_code == 404
     assert len(admin.get(f"/api/v1/assets/{a['id']}").json()["events"][0]["proofs"]) == 2
+
+
+def test_registry_sorting_and_issuing_selected(users, client):
+    admin, carlo, eli = users["admin"], users["carlo"], users["eli"]
+    a = new_asset(admin, name="Zebra stapler", category="Office equipment").json()
+    b = new_asset(admin, name="aardvark mouse", category="IT equipment").json()
+    c = new_asset(admin, name="Mango desk lamp", category="Furniture").json()
+    names = [x["name"] for x in admin.get("/api/v1/assets?sort=name&page_size=100").json()["items"]]
+    assert names.index("aardvark mouse") < names.index("Mango desk lamp") < names.index("Zebra stapler")  # A to Z, case-insensitive
+    desc = [x["name"] for x in admin.get("/api/v1/assets?sort=name&dir=desc&page_size=100").json()["items"]]
+    assert desc.index("Zebra stapler") < desc.index("aardvark mouse")
+    assert admin.get("/api/v1/assets?sort=bogus").status_code == 422
+    # Different items, issued together to one person: one issuance, one notification.
+    before = len(carlo.get("/api/v1/notifications").json()["items"])
+    r = admin.post("/api/v1/assets/issue", {"asset_ids": [a["id"], b["id"], c["id"]], "employee_id": me_id(carlo)})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["count"] == 3 and out["issue_ref"].startswith("EA-ISS-") and out["event_id"]
+    assert len(carlo.get("/api/v1/notifications").json()["items"]) == before + 1
+    assert {x["issue_ref"] for x in carlo.get("/api/v1/me/assets").json() if x["id"] in (a["id"], b["id"], c["id"])} == {out["issue_ref"]}
+    assert admin.get("/api/v1/assets?holder=assigned&sort=holder&page_size=100").status_code == 200
+    # Already issued items are refused, with their references.
+    r = admin.post("/api/v1/assets/issue", {"asset_ids": [a["id"]], "employee_id": me_id(eli)})
+    assert r.status_code == 409 and a["reference"] in r.text
+    assert carlo.post("/api/v1/assets/issue", {"asset_ids": [b["id"]], "employee_id": me_id(eli)}).status_code == 403
+    # Export only the selected rows.
+    x = client.get(f"/api/v1/exports/assets?format=csv&ids={a['id']}&ids={c['id']}", headers=admin.h)
+    assert x.status_code == 200 and "Zebra stapler" in x.text and "Mango desk lamp" in x.text and "aardvark mouse" not in x.text

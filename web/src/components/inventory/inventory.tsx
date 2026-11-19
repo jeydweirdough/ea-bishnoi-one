@@ -7,6 +7,8 @@ import {
   ArrowLeftRight,
   ArrowUpFromLine,
   PackageMinus,
+  Download,
+  ListChecks,
   Camera,
   Ban,
   Boxes,
@@ -28,7 +30,7 @@ import {
 import { api, fmtDateTime, fmtRelative, invalidate, post, qs, useApi, type ApiError, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
 import { Button, Chip, Input, Select } from "@/components/ui/controls";
-import { CountStrip, Dialog, EmptyState, ErrorState, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
+import { CountStrip, Dialog, EmptyState, ErrorState, Pager, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
 import { DataTools } from "@/components/io/data-tools";
@@ -37,6 +39,8 @@ import { peso } from "@/components/fleet/fleet";
 import { useRouter } from "next/navigation";
 import { ItemThumb, PhotoGallery } from "@/components/ui/photos";
 import { ProofSection, type Proof } from "@/components/ui/proof-list";
+import { BulkAction, BulkBar, Checkbox, DataTable, toggleKeys, type Column, type SortState } from "@/components/ui/data-table";
+import { download } from "@/components/io/data-tools";
 import { cn } from "@/lib/cn";
 
 type Item = {
@@ -173,14 +177,41 @@ function StockView({ options }: { options?: Options }) {
   const [term, setTerm] = useState("");
   const [location, setLocation] = useState("");
   const [low, setLow] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [sort, setSort] = useState<SortState>({ key: "name", dir: "asc" });
+  const [selected, setSelected] = useState<Map<string, Item>>(new Map());
+  const [selecting, setSelecting] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setTerm(q), 250);
+    const t = setTimeout(() => {
+      setTerm(q);
+      setPage(1);
+    }, 250);
     return () => clearTimeout(t);
   }, [q]);
-  const data = useApi<{ items: Item[]; total: number; summary: { lines: number; low: number; reserved: number; value_php: string } }>(`/api/v1/inventory/items${qs({ q: term, location, low, page_size: 200 })}`);
+  const data = useApi<{ items: Item[]; total: number; summary: { lines: number; low: number; reserved: number; value_php: string } }>(
+    `/api/v1/inventory/items${qs({ q: term, location, low, sort: sort.key, dir: sort.dir, page, page_size: pageSize })}`,
+  );
   const s = data.data?.summary;
-  async function reorder() {
-    const ids = (data.data?.items ?? []).filter((i) => i.low).map((i) => i.id);
+  const rows = data.data?.items ?? [];
+  const key = (i: Item) => String(i.id);
+  const chosen = [...selected.values()];
+  const clear = () => {
+    setSelected(new Map());
+    setSelecting(false);
+  };
+  const select = (keys: string[], on: boolean) => setSelected((prev) => toggleKeys(prev, rows, key, keys, on));
+  async function exportSelected() {
+    try {
+      const sp = new URLSearchParams({ format: "xlsx" });
+      chosen.forEach((i) => sp.append("ids", String(i.id)));
+      await download(`/api/v1/exports/inventory?${sp}`, "stock-selected.xlsx");
+      toast(`Exported ${chosen.length} line${chosen.length === 1 ? "" : "s"}`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
+  async function reorder(ids = rows.filter((i) => i.low).map((i) => i.id)) {
     if (!ids.length) return;
     try {
       const r = await post<{ request_id: number; reference: string }>("/api/v1/inventory/reorder", { item_ids: ids });
@@ -207,20 +238,23 @@ function StockView({ options }: { options?: Options }) {
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3" strokeWidth={1.75} aria-hidden="true" />
             <Input type="search" placeholder="Search item or code" className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} />
           </label>
-          <Select aria-label="Location" value={location} onChange={(e) => setLocation(e.target.value)} className="sm:w-[200px]">
+          <Select aria-label="Location" value={location} onChange={(e) => (setLocation(e.target.value), setPage(1), setSelected(new Map()))} className="sm:w-[200px]">
             <option value="">All locations</option>
             {options?.locations.map((l) => (
               <option key={l}>{l}</option>
             ))}
           </Select>
-          <Chip on={low} onClick={() => setLow((v) => !v)}>
+          <Chip on={low} onClick={() => (setLow((v) => !v), setPage(1), setSelected(new Map()))}>
             Low stock
           </Chip>
+          <Button className="lg:hidden" variant={selecting ? "primary" : "secondary"} icon={ListChecks} onClick={() => (selecting ? clear() : setSelecting(true))}>
+            {selecting ? "Done" : "Select"}
+          </Button>
         </div>
         {low && (data.data?.items.length ?? 0) > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-canvas px-4 py-2.5 text-[13.5px] sm:px-5">
             <span>{data.data!.items.length} line(s) at or below reorder level.</span>
-            <Button size="sm" variant="primary" icon={ShoppingCart} onClick={reorder}>
+            <Button size="sm" variant="primary" icon={ShoppingCart} onClick={() => reorder()}>
               Create purchase request
             </Button>
           </div>
@@ -232,10 +266,25 @@ function StockView({ options }: { options?: Options }) {
         ) : data.data.items.length === 0 ? (
           <EmptyState icon={Boxes} title={q || low || location ? "No matching records" : "No stock items yet"} body={q || low || location ? undefined : "Add items, or import your current stock list from Excel."} compact />
         ) : (
-          <ul className="divide-y divide-line">
-            {data.data.items.map((i) => (
-              <li key={i.id}>
-                <Link href={`/stock/${i.id}`} className="group flex items-center gap-3.5 px-4 py-3 hover:bg-canvas sm:gap-4 sm:px-5">
+          <>
+            <DataTable
+              rows={rows}
+              columns={STOCK_COLUMNS}
+              rowKey={key}
+              rowLabel={(i) => i.name}
+              href={(i) => `/stock/${i.id}`}
+              selected={new Set(selected.keys())}
+              onSelect={select}
+              sort={sort}
+              onSort={(v) => (setSort(v), setPage(1))}
+              caption="Stock lines"
+            />
+            <ul className="divide-y divide-line lg:hidden">
+              {rows.map((i) =>
+                selecting ? (
+                  <li key={i.id}>
+                    <label className={cn("flex cursor-pointer items-center gap-3.5 px-4 py-3 sm:gap-4 sm:px-5", selected.has(key(i)) && "bg-canvas")}>
+                      <Checkbox checked={selected.has(key(i))} onChange={(on) => select([key(i)], on)} label={`Select ${i.name}`} />
                   <ItemThumb src={i.photo} icon={Boxes} className={i.low ? "border-danger/50 text-danger" : undefined} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[15px] font-bold">{i.name}</span>
@@ -248,16 +297,84 @@ function StockView({ options }: { options?: Options }) {
                     <span className={cn("tabular block text-[17px] font-bold leading-tight", i.low && "text-danger")}>{i.available}</span>
                     <span className="block text-[11.5px] text-ink-3">{i.unit} available</span>
                   </span>
-                  <ChevronRight className="size-4 shrink-0 text-mute group-hover:text-ink" strokeWidth={1.75} aria-hidden="true" />
-                </Link>
-              </li>
-            ))}
-          </ul>
+                    </label>
+                  </li>
+                ) : (
+                  <li key={i.id}>
+                    <Link href={`/stock/${i.id}`} className="group flex items-center gap-3.5 px-4 py-3 hover:bg-canvas sm:gap-4 sm:px-5">
+                  <ItemThumb src={i.photo} icon={Boxes} className={i.low ? "border-danger/50 text-danger" : undefined} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-bold">{i.name}</span>
+                    <span className="tabular block text-[12.5px] text-ink-3">
+                      {i.item_code} · {i.location}
+                      {i.reserved ? ` · ${i.reserved} reserved` : ""}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className={cn("tabular block text-[17px] font-bold leading-tight", i.low && "text-danger")}>{i.available}</span>
+                    <span className="block text-[11.5px] text-ink-3">{i.unit} available</span>
+                  </span>
+                      <ChevronRight className="size-4 shrink-0 text-mute group-hover:text-ink" strokeWidth={1.75} aria-hidden="true" />
+                    </Link>
+                  </li>
+                ),
+              )}
+            </ul>
+            <Pager page={page} pageSize={pageSize} total={data.data.total} onPage={setPage} onPageSize={(n) => (setPageSize(n), setPage(1))} />
+          </>
         )}
       </Panel>
+      {selected.size > 0 && <div className="h-20" aria-hidden="true" />}
+      <BulkBar count={chosen.length} onClear={clear}>
+        <BulkAction icon={Download} label="Export" onClick={exportSelected} />
+        <BulkAction
+          icon={ShoppingCart}
+          label="Purchase request"
+          onClick={async () => {
+            await reorder(chosen.map((i) => i.id));
+            clear();
+          }}
+        />
+      </BulkBar>
     </div>
   );
 }
+
+const STOCK_COLUMNS: Column<Item>[] = [
+  {
+    key: "item",
+    label: "Item",
+    sort: "name",
+    render: (i) => (
+      <span className="flex items-center gap-3">
+        <ItemThumb src={i.photo} icon={Boxes} className={i.low ? "border-danger/50 text-danger" : undefined} />
+        <span className="min-w-0">
+          <Link href={`/stock/${i.id}`} className="block truncate text-[14px] font-bold hover:underline">
+            {i.name}
+          </Link>
+          <span className="tabular block text-[12px] text-ink-3">{i.item_code}</span>
+        </span>
+      </span>
+    ),
+  },
+  { key: "category", label: "Category", sort: "category", render: (i) => <span className="text-ink-2">{i.category}</span> },
+  { key: "location", label: "Location", sort: "location", render: (i) => <span className="text-ink-2">{i.location}</span> },
+  {
+    key: "available",
+    label: "Available",
+    sort: "available",
+    align: "right",
+    render: (i) => (
+      <span className={cn("tabular font-bold", i.low && "text-danger")}>
+        {i.available} <span className="text-[12px] font-normal text-ink-3">{i.unit}</span>
+        {i.low && <span className="block text-[11.5px] font-medium">Low</span>}
+      </span>
+    ),
+  },
+  { key: "on_hand", label: "On hand", sort: "on_hand", align: "right", render: (i) => <span className="tabular">{i.on_hand}</span> },
+  { key: "reserved", label: "Reserved", align: "right", render: (i) => <span className="tabular text-ink-2">{i.reserved || "–"}</span> },
+  { key: "value", label: "Value", sort: "value", align: "right", render: (i) => <span className="tabular text-ink-2">{Number(i.value_php ?? 0) > 0 ? peso(i.value_php) : "–"}</span> },
+];
 
 type FillLine = { id: number; item_name: string; quantity: number; unit: string; covered: number; received: number; reservations: { id: number; quantity: number; status: string; item_id: number }[]; matches: { id: number; item_code: string; name: string; location: string; available: number; unit: string }[] };
 type FillRow = { request: { id: number; reference: string; subject: string; requester: Person; status: string }; lines: FillLine[] };

@@ -31,7 +31,7 @@ Assets, stock items and vehicles have photos, like a shop listing, so everyone k
 
 **Other camera touchpoints**
 - **Request form:** **Take photo** next to **Add a file**, so employees can show what they need or what is broken.
-- **Document reading:** **Take photo** on phones, to photograph a permit, passport or OR/CR instead of choosing a file.
+- **Documents on forms:** **Take photo** on phones, to photograph a permit, passport or OR/CR and attach it (nothing is read from it since 14 Nov).
 
 **Privacy and size**
 - Photos are shrunk on the phone before upload (long side 2000 px).
@@ -113,7 +113,9 @@ It is **not** offered on staff roles (Responsible, Assignee, Officer, Approver).
   - sex and age on the flight PDF.
 - Browser suite **e2e6**: 9 checks on desktop and phone.
 
-## Document reading (OCR) — 13 Nov 2026
+## Document reading (OCR) — 13 Nov 2026 · removed 14 Nov 2026
+
+> **Removed on 14 Nov 2026.** Reading was unreliable on real documents (the vehicle OR/CR in particular), so it was taken out rather than tuned per document. Forms now have **Attach the document** (camera, gallery or drag-and-drop): the file is saved with the record and the details are typed in. Fleet and corporate card forms have no photo box: their photos were only ever read and discarded, never stored. The OCR engine, `POST /api/v1/scan` and its tests are gone, and the API image no longer installs it. The notes below are kept as history.
 
 Users upload the document and the system fills in the form. They review the values and save, and the file is attached to the record automatically.
 
@@ -578,6 +580,12 @@ Sidebar: Assets, Fleet, Compliance and Travel now sit under a **Registers** head
   - Take photo opens a full-screen in-app camera (several shots in a row, front/back switch). Each photo is stamped with the date, time (with time zone) and location (coordinates and accuracy) plus what it is for, burned into the picture. If the browser can't open the camera, the phone's camera app opens and the stamp is added after. Location is used only if the person allows it ("Location not shared" otherwise); the site's Permissions-Policy now allows camera and location for its own pages only.
   - The same facts are kept with each photo and shown under it (with a map link). Photos picked from the gallery are marked "Uploaded", never "Taken". Hidden photo metadata is still removed.
   - Return asks "Returned by" from the people who still have pieces of that item, with how many each has ("Carlo Diaz · has 6 pc"), or "Someone else…". A person can't return more than they have.
+- **Registers as tables on desktop (Asset Registry, Consumables & Stock).**
+  - Sortable columns (click a header: A to Z, click again: Z to A), a checkbox per row and "select all on this page", rows per page (10/25/50/100), and first / previous / next / last page. Clicking a row opens the record. Grouped asset rows ("× 5") expand to their serials in the table too. Columns that don't fit (Category, Condition) appear on wide screens only.
+  - Selecting rows shows a bar with bulk actions. Assets: **Issue** (the selection goes to one person as one issuance: one acknowledgement, one issuance form, optional photo proof; only for items in stock), **Export** (just the selected records, Excel), **Move to Consumables & Stock**. Stock: **Export**, **Purchase request** (a draft for the selected lines).
+  - Phones keep the card list; **Select** turns on checkboxes and the same bar sits above the tab bar.
+  - API: `sort` and `dir` on `GET /assets` and `GET /inventory/items`; `POST /assets/issue` issues a selection as one issuance.
+  - Forms now start with their prefilled values at once (no brief "Choose…" before the default appears).
 - **One way to add files everywhere.** Every upload (photos, proof of receipt, request attachments, asset and request files, task evidence, signed copies, Excel import, document reading) uses the same box: drag and drop, paste a screenshot (Ctrl+V), Browse (gallery on a phone, file explorer on a computer), and Take photo on phones. Wrong file types are refused with a message.
 - **Consumables & Stock** (formerly Equipment Inventory). This is where anything counted by quantity lives: bond paper, toner, coffee, cleaning supplies.
   - Item codes are automatic when left empty, for example `GPI-CS-0007`.

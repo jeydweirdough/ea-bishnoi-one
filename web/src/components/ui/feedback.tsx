@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { createContext, use, useCallback, useEffect, useRef, useState } from "react";
-import { CircleCheck, CircleAlert, RotateCw, X, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CircleCheck, CircleAlert, RotateCw, X, type LucideIcon } from "lucide-react";
 import { IconTile } from "@/components/icons";
 import { Button } from "./controls";
 import { cn } from "@/lib/cn";
@@ -202,23 +202,68 @@ export const useToast = () => use(ToastContext);
 
 /* ---------------------------------------------------------------- pager */
 
-export function Pager({ page, pageSize, total, onPage }: { page: number; pageSize: number; total: number; onPage: (p: number) => void }) {
+export function Pager({ page, pageSize, total, onPage, onPageSize, sizes = [10, 25, 50, 100] }: { page: number; pageSize: number; total: number; onPage: (p: number) => void; onPageSize?: (n: number) => void; sizes?: number[] }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));
-  if (total <= pageSize) return null;
+  if (total <= (onPageSize ? Math.min(...sizes) : pageSize)) return null;
   const from = (page - 1) * pageSize + 1;
   const to = Math.min(total, page * pageSize);
+  if (!onPageSize)
+    return (
+      <nav aria-label="Pagination" className="flex items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
+        <p className="tabular text-[13px] text-ink-3">
+          {from}–{to} of {total}
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+            Previous
+          </Button>
+          <Button size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)}>
+            Next
+          </Button>
+        </div>
+      </nav>
+    );
+  const nav: [LucideIcon, string, number, boolean][] = [
+    [ChevronsLeft, "First page", 1, page <= 1],
+    [ChevronLeft, "Previous page", page - 1, page <= 1],
+    [ChevronRight, "Next page", page + 1, page >= pages],
+    [ChevronsRight, "Last page", pages, page >= pages],
+  ];
   return (
-    <nav aria-label="Pagination" className="flex items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
+    <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
       <p className="tabular text-[13px] text-ink-3">
         {from}–{to} of {total}
       </p>
-      <div className="flex gap-2">
-        <Button size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-          Previous
-        </Button>
-        <Button size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)}>
-          Next
-        </Button>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-2 text-[13px] text-ink-2">
+          Rows per page
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSize(Number(e.target.value))}
+            className="h-9 rounded-[var(--radius-ctl)] border border-edge bg-sheet px-2 text-[13px] text-ink"
+          >
+            {sizes.map((n) => (
+              <option key={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+        <span className="tabular text-[13px] font-medium">
+          Page {page} of {pages}
+        </span>
+        <span className="flex gap-1">
+          {nav.map(([Icon, label, to, off]) => (
+            <button
+              key={label}
+              type="button"
+              aria-label={label}
+              disabled={off}
+              onClick={() => onPage(to)}
+              className="flex size-9 items-center justify-center rounded-[var(--radius-ctl)] border border-edge bg-sheet text-ink hover:bg-canvas disabled:opacity-40"
+            >
+              <Icon className="size-4" strokeWidth={1.75} />
+            </button>
+          ))}
+        </span>
       </div>
     </nav>
   );

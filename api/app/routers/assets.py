@@ -6,7 +6,8 @@ from typing import Literal
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 
 from ..core import audit, bad_request, conflict, forbidden, next_reference, not_found, notify, now
@@ -160,6 +161,8 @@ async def list_assets(
     category: str | None = None,
     holder: Literal["any", "assigned", "unassigned", "unacknowledged"] = "any",
     grouped: bool = False,
+    sort: Literal["updated", "name", "category", "status", "holder", "condition"] = "updated",
+    dir: Literal["asc", "desc"] | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ) -> dict:
@@ -181,7 +184,16 @@ async def list_assets(
         stmt = stmt.outerjoin(Employee, Employee.id == Asset.holder_id).where(
             or_(Asset.reference.ilike(like), Asset.name.ilike(like), Asset.serial_number.ilike(like), Asset.brand.ilike(like), Asset.model.ilike(like), Employee.name.ilike(like))
         )
-    order = (Asset.updated_at.desc(), Asset.id.desc())
+    # Newest first by default; names and the rest A to Z.
+    desc_ = (dir or ("desc" if sort == "updated" else "asc")) == "desc"
+    holder_alias = aliased(Employee)
+    if sort == "holder":
+        stmt = stmt.outerjoin(holder_alias, holder_alias.id == Asset.holder_id)
+    col = {
+        "updated": Asset.updated_at, "name": func.lower(Asset.name), "category": Asset.category, "status": Asset.status,
+        "condition": Asset.condition, "holder": func.lower(holder_alias.name),
+    }[sort]
+    order = (col.desc() if desc_ else col.asc(), Asset.id.desc() if desc_ else Asset.id.asc())
     if grouped:
         # One entry per issuance (same items handed to one person together), and one per set of
         # identical items not issued to anyone. Each entry lists its members.
@@ -415,6 +427,35 @@ async def assign(asset_id: int, body: AssignIn, principal: Staff, session: Sessi
     await issue_together(session, principal, items, emp, when=body.date_issued or date.today(), condition=body.condition, note=body.note)
     await session.commit()
     return await asset_detail(session, principal, await scoped(session, Asset, a.id, principal))
+
+
+class BulkIssueIn(BaseModel):
+    asset_ids: list[int] = Field(..., min_length=1, max_length=MAX_PER_REGISTRATION)
+    employee_id: int
+    date_issued: date | None = None
+    condition: AssetCondition | None = None
+    note: str | None = Field(None, max_length=2000)
+
+
+@router.post("/assets/issue")
+async def issue_selected(body: BulkIssueIn, principal: Staff, session: Session) -> dict:
+    """Hand the selected items to one person as one issuance: one acknowledgement, one issuance form."""
+    ids = list(dict.fromkeys(body.asset_ids))
+    items = [await scoped(session, Asset, i, principal) for i in ids]
+    if len({a.company_id for a in items}) > 1:
+        raise bad_request({"message": "Choose items from one company at a time"})
+    blocked = [a.reference for a in items if a.holder_id or a.status != AssetStatus.in_stock]
+    if blocked:
+        raise conflict(f"Only items in stock can be issued. Not available: {', '.join(blocked[:5])}{'…' if len(blocked) > 5 else ''}")
+    if body.date_issued and body.date_issued > date.today():
+        raise bad_request({"message": "Issue date cannot be in the future", "fields": {"date_issued": "In the future"}})
+    emp = await employee_in(session, body.employee_id, items[0].company_id, "employee_id")
+    items.sort(key=lambda a: a.id)
+    ref = await issue_together(session, principal, items, emp, when=body.date_issued or date.today(), condition=body.condition, note=body.note)
+    await session.flush()
+    ev = (await session.execute(select(AssetEvent).where(AssetEvent.asset_id == items[0].id).order_by(AssetEvent.id.desc()).limit(1))).scalar_one()
+    await session.commit()
+    return {"issue_ref": ref, "count": len(items), "first_id": items[0].id, "event_id": ev.id, "holder": person(emp)}
 
 
 @router.post("/assets/{asset_id}/acknowledge")

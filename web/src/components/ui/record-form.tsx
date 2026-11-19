@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { api, invalidate, useApi, type ApiError } from "@/lib/api";
 import { Button, Field, Input, Segmented, Select, Textarea } from "./controls";
 import { Dialog, useToast } from "./feedback";
-import { DocumentReader, ReadBadge, VERIFY_BELOW, type ScanKind, type ScanResult } from "./document-reader";
+import { ChosenFile, FileDrop } from "./file-drop";
 import { PendingPhotos, uploadPhoto, type PhotoOwner } from "./photos";
 import { uploadProof } from "./proof-list";
 import { PeoplePicker, type PersonDraft } from "@/components/requests/people-picker";
@@ -143,7 +143,7 @@ function VehiclePicker({ id, value, onChange, invalid }: { id: string; value: st
 }
 
 /** Field grid with essentials first and optional fields under "More options". */
-export function RecordFields({ fields, values, setValues, errors, marks = {}, personDraft }: { fields: FieldDef[]; values: Values; setValues: (v: Values) => void; errors: Record<string, string>; marks?: Record<string, "read" | "verify">; personDraft?: PersonDraft | null }) {
+export function RecordFields({ fields, values, setValues, errors }: { fields: FieldDef[]; values: Values; setValues: (v: Values) => void; errors: Record<string, string> }) {
   const shown = fields.filter((f) => visible(f, values));
   const main = shown.filter((f) => !f.more);
   const extra = shown.filter((f) => f.more);
@@ -157,8 +157,8 @@ export function RecordFields({ fields, values, setValues, errors, marks = {}, pe
   const grid = (list: FieldDef[]) => (
     <div className="grid gap-4 sm:grid-cols-2">
       {list.map((f) => (
-        <Field key={f.name} label={f.label} required={f.required} hint={f.hint} error={errors[f.name]} htmlFor={`rf-${f.name}`} className={cn(!f.half && "sm:col-span-2")} badge={marks[f.name] ? <ReadBadge verify={marks[f.name] === "verify"} /> : undefined}>
-          <Control f={f} value={values[f.name] ?? ""} onChange={(v) => setValues({ ...values, [f.name]: v })} invalid={Boolean(errors[f.name])} draft={personDraft} />
+        <Field key={f.name} label={f.label} required={f.required} hint={f.hint} error={errors[f.name]} htmlFor={`rf-${f.name}`} className={cn(!f.half && "sm:col-span-2")}>
+          <Control f={f} value={values[f.name] ?? ""} onChange={(v) => setValues({ ...values, [f.name]: v })} invalid={Boolean(errors[f.name])} />
         </Field>
       ))}
     </div>
@@ -180,22 +180,6 @@ export function RecordFields({ fields, values, setValues, errors, marks = {}, pe
   );
 }
 
-/** Fill form values from a scan: only fields this form has, never over what the user typed (defaults may be replaced). */
-function applyScan(fields: FieldDef[], values: Values, marks: Record<string, "read" | "verify">, r: ScanResult, initial: Values = {}) {
-  const v = { ...values };
-  const m = { ...marks };
-  for (const f of fields) {
-    const got = r.fields[f.name];
-    if (!got) continue;
-    const current = (v[f.name] ?? "").trim();
-    if (current && !marks[f.name] && current !== (initial[f.name] ?? "")) continue; // typed by the user
-    if (f.type === "select" && f.options && !f.options.some((o) => (typeof o === "string" ? o : o.value) === got.value)) continue;
-    v[f.name] = got.value;
-    m[f.name] = got.confidence < VERIFY_BELOW ? "verify" : "read";
-  }
-  return { values: v, marks: m };
-}
-
 /**
  * A dialog that edits a record described by `fields`. `onSubmit` throws an ApiError on failure; it may
  * return the saved record so a scanned document can be attached to it.
@@ -210,7 +194,7 @@ export function RecordDialog({
   initial,
   submitLabel = "Save",
   onSubmit,
-  scan,
+  attach,
   photos,
   proof,
 }: {
@@ -222,7 +206,8 @@ export function RecordDialog({
   initial?: Values;
   submitLabel?: string;
   onSubmit: (payload: Record<string, unknown>) => Promise<unknown>;
-  scan?: { kind: ScanKind; attachTo?: string; ownerId?: number };
+  /** "Attach the document": one file (PDF or photo) attached to the saved record (or to `ownerId`). Nothing is read from it. */
+  attach?: { ownerType: string; ownerId?: number; title?: string };
   /** Lets the user take or pick photos of the new item; uploaded after it is saved (onSubmit must return it). */
   photos?: PhotoOwner;
   /**
@@ -236,26 +221,23 @@ export function RecordDialog({
   const [file, setFile] = useState<File | null>(null);
   const [pending, setPending] = useState<File[]>([]);
   const [proofs, setProofs] = useState<File[]>([]);
-  const [marks, setMarks] = useState<Record<string, "read" | "verify">>({});
-  const [personDraft, setPersonDraft] = useState<PersonDraft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
+  // Reset the form the moment it opens (during render, so it never shows the previous values first).
+  // Only when it opens: callers often pass a fresh `initial` object each render.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset the form each time it opens
       setValues(initial ?? {});
       setFile(null);
       setPending([]);
       setProofs([]);
-      setMarks({});
-      setPersonDraft(null);
       setErrors({});
       setMessage(undefined);
     }
-    // Only when it opens: callers often pass a fresh `initial` object each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }
 
   const missing = fields.some((f) => f.required && visible(f, values) && !(values[f.name] ?? "").trim());
 
@@ -265,10 +247,10 @@ export function RecordDialog({
     setMessage(undefined);
     try {
       const saved = (await onSubmit(toPayload(fields, values))) as { id?: number; created?: { id: number }[]; photo_owner?: PhotoOwner } | undefined;
-      const ownerId = scan?.ownerId ?? saved?.id;
-      if (file && scan?.attachTo && ownerId) {
+      const ownerId = attach?.ownerId ?? saved?.id;
+      if (file && attach && ownerId) {
         const fd = new FormData();
-        fd.set("owner_type", scan.attachTo);
+        fd.set("owner_type", attach.ownerType);
         fd.set("owner_id", String(ownerId));
         fd.set("file", file);
         await api("/api/v1/attachments", { method: "POST", body: fd }).catch((e: ApiError) => toast(`Saved, but the document was not attached: ${e.message}`, "error"));
@@ -316,38 +298,25 @@ export function RecordDialog({
         </>
       }
     >
-      {scan && (
-        <DocumentReader
-          key={open ? "open" : "closed"}
-          kind={scan.kind}
-          discard={!scan.attachTo}
-          file={file}
-          onFile={setFile}
-          onRead={(r) => {
-            if (!r) {
-              setPersonDraft(null);
-              return setMarks({});
-            }
-            setPersonDraft(r.person ?? null);
-            const next = applyScan(fields, values, marks, r, initial);
-            setValues(next.values);
-            setMarks(next.marks);
-          }}
-        />
+      {attach && (
+        <FileDrop
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,image/*"
+          multiple={false}
+          className="mb-5"
+          title={attach.title ?? "Attach the document"}
+          hint="optional · PDF or photo, up to 10 MB. It is saved with the record."
+          inputLabel="Document file"
+          onFiles={(f) => setFile(f[0])}
+        >
+          {file && <ChosenFile file={file} onRemove={() => setFile(null)} />}
+        </FileDrop>
       )}
       {photos && <PendingPhotos files={pending} onChange={setPending} />}
       <RecordFields
         fields={fields}
         values={values}
         errors={errors}
-        marks={marks}
-        personDraft={personDraft}
-        setValues={(v) => {
-          // Editing a value read from the document means the user has checked it.
-          const touched = Object.keys(marks).filter((k) => v[k] !== values[k]);
-          if (touched.length) setMarks(Object.fromEntries(Object.entries(marks).filter(([k]) => !touched.includes(k))));
-          setValues(v);
-        }}
+        setValues={setValues}
       />
       {proof && (!proof.when || proof.when(values)) && (
         <div className="mt-5 [&>div]:mb-0">

@@ -145,6 +145,7 @@ async def next_item_code(session, company_id: int, category: str) -> str:
 async def list_items(
     principal: Staff, session: Session, q: str | None = Query(None, max_length=200), category: str | None = None, location: str | None = None,
     low: bool = False, status: str | None = "active", page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500),
+    sort: Literal["name", "category", "location", "available", "on_hand", "value", "updated"] = "name", dir: Literal["asc", "desc"] | None = None,
 ) -> dict:
     stmt = select(InventoryItem).where(InventoryItem.company_id.in_(principal.company_ids))
     if category:
@@ -159,6 +160,12 @@ async def list_items(
     rows = list((await session.execute(stmt.order_by(InventoryItem.name, InventoryItem.location))).scalars())
     if low:
         rows = [i for i in rows if i.available <= i.reorder_level]
+    key = {
+        "name": lambda i: (i.name.lower(), i.location.lower()), "category": lambda i: (i.category, i.name.lower()), "location": lambda i: (i.location.lower(), i.name.lower()),
+        "available": lambda i: (i.available, i.name.lower()), "on_hand": lambda i: (i.on_hand, i.name.lower()),
+        "value": lambda i: ((i.unit_cost_php or Decimal(0)) * i.on_hand, i.name.lower()), "updated": lambda i: (i.updated_at, i.id),
+    }[sort]
+    rows.sort(key=key, reverse=(dir or ("desc" if sort in ("updated", "value") else "asc")) == "desc")
     everything = list((await session.execute(select(InventoryItem).where(InventoryItem.company_id.in_(principal.company_ids), InventoryItem.status == "active"))).scalars())
     summary = {
         "lines": len(everything),

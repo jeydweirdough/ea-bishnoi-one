@@ -243,3 +243,16 @@ def test_returns_come_from_people_who_have_it(users):
     assert [h["person"]["name"] for h in d["holders"]] == ["Eli Navarro"]
     # Someone who never had it can still hand pieces back (found in a drawer); no limit applies.
     assert admin.post(url, {"kind": "return", "quantity": 1, "issued_to_id": me_id(users["dana"])}).status_code == 200
+
+
+def test_stock_sorting(users):
+    admin = users["admin"]
+    item(admin, item_code="SRT-1", name="Sort tape", location="Cabinet A", opening_quantity=40)
+    item(admin, item_code="SRT-2", name="Sort glue", location="Cabinet B", opening_quantity=3)
+    rows = admin.get("/api/v1/inventory/items?q=Sort&sort=available").json()["items"]
+    assert [r["item_code"] for r in rows] == ["SRT-2", "SRT-1"]
+    rows = admin.get("/api/v1/inventory/items?q=Sort&sort=available&dir=desc").json()["items"]
+    assert [r["item_code"] for r in rows] == ["SRT-1", "SRT-2"]
+    rows = admin.get("/api/v1/inventory/items?q=Sort&sort=name").json()["items"]
+    assert [r["name"] for r in rows] == ["Sort glue", "Sort tape"]
+    assert admin.get("/api/v1/inventory/items?sort=price").status_code == 422

@@ -9,7 +9,7 @@ The tunnel already sends `*.bishnoi.ai` to the Coolify proxy on `localhost:80`, 
 | Service | Image | Reachable from | Data |
 |---|---|---|---|
 | `web` | `web/Dockerfile` (Next.js standalone, Node 22) | Coolify proxy → port 3000 (`ea.bishnoi.ai`) | none |
-| `api` | `api/Dockerfile` (FastAPI, Python 3.14, local OCR) | private network only (`http://api:8000`) | volume `uploads` (documents, item photos) |
+| `api` | `api/Dockerfile` (FastAPI, Python 3.14) | private network only (`http://api:8000`) | volume `uploads` (documents, item photos) |
 | database | separate Coolify resource `ea-bishnoi-one-database` (`postgres:17-alpine`) | Coolify's private network only | its own volume, Coolify scheduled backups |
 
 - The browser only talks to `web`. `web` forwards `/api/*` to `api`, so cookies stay first-party and no CORS is needed.
@@ -30,7 +30,7 @@ The tunnel already sends `*.bishnoi.ai` to the Coolify proxy on `localhost:80`, 
    - `DATABASE_URL`: the internal URL from step 2.
    - `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_PASSWORD`: the first Admin.
    - Leave the rest at their defaults. `PUBLIC_ORIGIN` must stay `https://ea.bishnoi.ai`.
-5. **Deploy.** The first build takes several minutes: the API image installs the OCR engine. On first start the API:
+5. **Deploy.** The first build takes a few minutes. On first start the API:
    1. creates the tables;
    2. creates the starting data: companies GPI and 2MG, departments, the two approval routes, deadlines (SLA) and travel requirements;
    3. creates the first Admin.

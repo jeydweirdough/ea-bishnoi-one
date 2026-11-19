@@ -23,6 +23,12 @@ const nextConfig: NextConfig = {
   },
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    // Every screen sits behind sign-in: AuthGate shows the page only once the browser knows who is
+    // signed in, so the server-side check for instant navigation never sees the page itself and
+    // flags it as "dropped from rendering". Check only pages that ask for it (export const instant).
+    instantInsights: { validationLevel: "manual-warning" },
+  },
   // Screens that only repeated what each record's own page shows were merged (Nov 2026); old links still land.
   async redirects() {
     return [

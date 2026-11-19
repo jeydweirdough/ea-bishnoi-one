@@ -11,7 +11,7 @@ from . import auth
 from .config import get_settings
 from .db import create_schema, get_engine, session_factory
 from . import proofs
-from .routers import admin, approvals, assets, attachments, compliance, contracts_banking, documents, fleet, health, intake, inventory, io, photos, reports, requests, scan, session, tasks, travel
+from .routers import admin, approvals, assets, attachments, compliance, contracts_banking, documents, fleet, health, intake, inventory, io, photos, reports, requests, session, tasks, travel
 from .workflow import run_escalations
 
 log = logging.getLogger("executive_admin")
@@ -61,12 +61,6 @@ async def lifespan(app: FastAPI):
             log.info("grouped earlier issued assets into %d issuances", n)
     if settings.escalation_interval_s > 0:
         task = asyncio.create_task(_escalation_loop(settings.escalation_interval_s))
-        # Load the OCR models in the background so the first document upload reads in seconds.
-        import threading
-
-        from .ocr import warm_up
-
-        threading.Thread(target=warm_up, name="ocr-warm-up", daemon=True).start()
     yield
     if task:
         task.cancel()
@@ -78,7 +72,7 @@ async def lifespan(app: FastAPI):
 settings = get_settings()
 app = FastAPI(
     title="Executive Admin API",
-    version="0.3.0",
+    version="1.0.0",
     lifespan=lifespan,
     # The interactive API docs are for development only.
     docs_url="/docs" if settings.is_dev else None,
@@ -110,7 +104,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth.router)
-for r in (health, session, requests, attachments, approvals, tasks, admin, assets, inventory, fleet, compliance, travel, io, reports, documents, scan, photos, intake, proofs):
+for r in (health, session, requests, attachments, approvals, tasks, admin, assets, inventory, fleet, compliance, travel, io, reports, documents, photos, intake, proofs):
     app.include_router(r.router)
 app.include_router(contracts_banking.contracts)
 app.include_router(contracts_banking.banking)

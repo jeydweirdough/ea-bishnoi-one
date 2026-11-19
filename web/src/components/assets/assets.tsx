@@ -20,6 +20,7 @@ import {
   UserPlus,
   Wrench,
   ChevronDown,
+  ListChecks,
   ChevronRight,
   Paperclip,
   Download,
@@ -38,6 +39,8 @@ import { DocumentsPanel } from "@/components/documents/documents";
 import { useShell } from "@/components/shell/shell-context";
 import { ItemThumb, PhotoGallery } from "@/components/ui/photos";
 import { FileDrop } from "@/components/ui/file-drop";
+import { BulkAction, BulkBar, Checkbox, DataTable, toggleKeys, type Column, type SortState } from "@/components/ui/data-table";
+import { download } from "@/components/io/data-tools";
 import { cn } from "@/lib/cn";
 
 /* ---------------------------------------------------------------- types */
@@ -181,47 +184,61 @@ function serialList(v: unknown): string[] {
 
 /* ---------------------------------------------------------------- shared rows */
 
-function AssetRow({ a, extra }: { a: Asset; extra?: React.ReactNode }) {
+const rowClass = "group flex items-start gap-3.5 px-4 py-3.5 transition-colors duration-150 hover:bg-canvas sm:items-center sm:gap-4 sm:px-5";
+
+function AssetRow({ a, extra, select }: { a: Asset; extra?: React.ReactNode; select?: { on: boolean; toggle: (on: boolean) => void } }) {
   const [open, setOpen] = useState(false);
   const g = a.group;
   const first = g?.members[0];
   const last = g?.members[g.members.length - 1];
-  return (
-    <li>
-      <Link href={`/asset/${a.id}`} className="group flex items-start gap-3.5 px-4 py-3.5 transition-colors duration-150 hover:bg-canvas sm:items-center sm:gap-4 sm:px-5">
-        <ItemThumb src={a.photo} icon={Package} className="mt-0.5 sm:mt-0" />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="truncate text-[15px] font-bold leading-snug">{a.name}</span>
-            {g && <span className="tabular shrink-0 rounded-full bg-ink px-2 py-px text-[12px] font-bold text-white">× {g.count}</span>}
+  const inner = (
+    <>
+          <ItemThumb src={a.photo} icon={Package} className="mt-0.5 sm:mt-0" />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <span className="truncate text-[15px] font-bold leading-snug">{a.name}</span>
+              {g && <span className="tabular shrink-0 rounded-full bg-ink px-2 py-px text-[12px] font-bold text-white">× {g.count}</span>}
+            </span>
+            <span className="mt-0.5 flex flex-wrap gap-x-2 text-[12.5px] text-ink-3">
+              {g ? (
+                <>
+                  {a.holder && a.issue_ref && <span className="tabular">{a.issue_ref}</span>}
+                  <span className="tabular">
+                    SN {first?.serial_number} to {last?.serial_number}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="tabular">{a.reference}</span>
+                  {a.serial_number && <span className="tabular">SN {a.serial_number}</span>}
+                </>
+              )}
+              <span>{a.category}</span>
+            </span>
+            <span className="mt-0.5 block text-[12.5px] text-ink-2">{a.holder ? `With ${a.holder.name}` : a.location ? `At ${a.location}` : "Not issued"}</span>
+            {extra}
+            <span className="mt-2 flex sm:hidden">
+              <AssetStatusBadge a={a} />
+            </span>
           </span>
-          <span className="mt-0.5 flex flex-wrap gap-x-2 text-[12.5px] text-ink-3">
-            {g ? (
-              <>
-                {a.holder && a.issue_ref && <span className="tabular">{a.issue_ref}</span>}
-                <span className="tabular">
-                  SN {first?.serial_number} to {last?.serial_number}
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="tabular">{a.reference}</span>
-                {a.serial_number && <span className="tabular">SN {a.serial_number}</span>}
-              </>
-            )}
-            <span>{a.category}</span>
-          </span>
-          <span className="mt-0.5 block text-[12.5px] text-ink-2">{a.holder ? `With ${a.holder.name}` : a.location ? `At ${a.location}` : "Not issued"}</span>
-          {extra}
-          <span className="mt-2 flex sm:hidden">
+          <span className="hidden sm:block">
             <AssetStatusBadge a={a} />
           </span>
-        </span>
-        <span className="hidden sm:block">
-          <AssetStatusBadge a={a} />
-        </span>
-        <ChevronRight className="mt-3 size-4 shrink-0 text-mute group-hover:text-ink sm:mt-0" strokeWidth={1.75} aria-hidden="true" />
-      </Link>
+    </>
+  );
+  return (
+    <li>
+      {select ? (
+        <label className={cn(rowClass, "cursor-pointer", select.on && "bg-canvas")}>
+          <Checkbox checked={select.on} onChange={select.toggle} label={`Select ${a.name}`} className="mt-3 sm:mt-0" />
+          {inner}
+        </label>
+      ) : (
+        <Link href={`/asset/${a.id}`} className={rowClass}>
+          {inner}
+          <ChevronRight className="mt-3 size-4 shrink-0 text-mute group-hover:text-ink sm:mt-0" strokeWidth={1.75} aria-hidden="true" />
+        </Link>
+      )}
       {g && (
         <div className="px-4 pb-3 pl-[76px] sm:px-5 sm:pl-[84px]">
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-ctl)] px-1 text-[13px] font-medium text-ink-2 hover:text-ink">
@@ -279,15 +296,97 @@ const VIEWS: { value: string | undefined; label: string }[] = [
   { value: "retired", label: "Retired" },
 ];
 
+const ids = (a: Asset) => (a.group ? a.group.members.map((m) => m.id) : [a.id]);
+const rowKey = (a: Asset) => `${a.id}-${a.group?.count ?? 1}`;
+const issuable = (a: Asset) => a.status === "in_stock" && !a.holder;
+
+const COLUMNS: Column<Asset>[] = [
+  {
+    key: "asset",
+    label: "Asset",
+    sort: "name",
+    render: (a) => (
+      <span className="flex items-center gap-3">
+        <ItemThumb src={a.photo} icon={Package} />
+        <span className="min-w-0">
+          <span className="flex items-center gap-2">
+            <Link href={`/asset/${a.id}`} className="truncate text-[14px] font-bold hover:underline">
+              {a.name}
+            </Link>
+            {a.group && <span className="tabular shrink-0 rounded-full bg-ink px-2 py-px text-[11.5px] font-bold text-white">× {a.group.count}</span>}
+          </span>
+          <span className="tabular block truncate text-[12px] text-ink-3">
+            {a.group
+              ? `${a.holder && a.issue_ref ? `${a.issue_ref} · ` : ""}SN ${a.group.members[0].serial_number} to ${a.group.members[a.group.members.length - 1].serial_number}`
+              : `${a.reference}${a.serial_number ? ` · SN ${a.serial_number}` : ""}`}
+          </span>
+        </span>
+      </span>
+    ),
+  },
+  { key: "category", label: "Category", sort: "category", className: "hidden 2xl:table-cell", render: (a) => <span className="text-ink-2">{a.category}</span> },
+  {
+    key: "holder",
+    label: "With / at",
+    sort: "holder",
+    render: (a) => (a.holder ? <span className="font-medium">{a.holder.name}</span> : <span className="text-ink-3">{a.location ?? "Not issued"}</span>),
+  },
+  { key: "condition", label: "Condition", sort: "condition", className: "hidden 2xl:table-cell", render: (a) => <span className="text-ink-2">{conditionLabel(a.condition)}</span> },
+  { key: "status", label: "Status", sort: "status", render: (a) => <AssetStatusBadge a={a} /> },
+  {
+    key: "updated",
+    label: "Updated",
+    sort: "updated",
+    align: "right",
+    render: (a) => (
+      <span className="tabular block whitespace-nowrap text-[12.5px] leading-snug">
+        {fmtDate(a.updated_at)}
+        <span className="block text-ink-3">{new Date(a.updated_at).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}</span>
+      </span>
+    ),
+  },
+];
+
 export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) {
   const toast = useToast();
+  const router = useRouter();
   const [q, setQ] = useState("");
   const term = useDebounced(q);
   const [status, setStatus] = useState<string | undefined>(view);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [sort, setSort] = useState<SortState>({ key: "updated", dir: "desc" });
+  const [selected, setSelected] = useState<Map<string, Asset>>(new Map());
+  const [selecting, setSelecting] = useState(false);
   const [creating, setCreating] = useState(false);
-  const data = useApi<AssetPage>(`/api/v1/assets${qs({ q: term, status: status && status !== "unacknowledged" ? [status] : undefined, holder: status === "unacknowledged" ? status : undefined, grouped: true, page, page_size: 25 })}`);
+  const [bulk, setBulk] = useState<"issue" | "stock" | null>(null);
+  const data = useApi<AssetPage>(
+    `/api/v1/assets${qs({ q: term, status: status && status !== "unacknowledged" ? [status] : undefined, holder: status === "unacknowledged" ? status : undefined, grouped: true, sort: sort.key, dir: sort.dir, page, page_size: pageSize })}`,
+  );
   const s = data.data?.summary;
+  const rows = data.data?.items ?? [];
+  const chosen = [...selected.values()];
+  const chosenIds = chosen.flatMap(ids);
+  const clear = () => {
+    setSelected(new Map());
+    setSelecting(false);
+  };
+  const select = (keys: string[], on: boolean) => setSelected((prev) => toggleKeys(prev, rows, rowKey, keys, on));
+  const allIssuable = chosen.length > 0 && chosen.every(issuable);
+  // "Move to Consumables & Stock" works per item (every record of the same name and category).
+  const items = [...new Map(chosen.map((a) => [`${a.name.trim().toLowerCase()}|${a.category}`, a])).values()];
+
+  async function exportSelected() {
+    try {
+      const sp = new URLSearchParams({ format: "xlsx" });
+      chosenIds.forEach((i) => sp.append("ids", String(i)));
+      await download(`/api/v1/exports/assets?${sp}`, "assets-selected.xlsx");
+      toast(`Exported ${chosenIds.length} record${chosenIds.length === 1 ? "" : "s"}`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
+
   return (
     <ModuleShell
       group="assets"
@@ -312,10 +411,15 @@ export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) 
       <div className="mt-5">
         <Panel>
           <div className="flex flex-col gap-3 border-b border-line p-3 sm:px-5">
-            <SearchBox value={q} onChange={(v) => (setQ(v), setPage(1))} placeholder="Search name, serial, tag or holder" />
+            <div className="flex gap-2">
+              <SearchBox value={q} onChange={(v) => (setQ(v), setPage(1), setSelected(new Map()))} placeholder="Search name, serial, tag or holder" />
+              <Button className="lg:hidden" variant={selecting ? "primary" : "secondary"} icon={ListChecks} onClick={() => (selecting ? clear() : setSelecting(true))}>
+                {selecting ? "Done" : "Select"}
+              </Button>
+            </div>
             <div className="no-scrollbar -mx-3 flex gap-1.5 overflow-x-auto px-3 sm:mx-0 sm:px-0">
               {VIEWS.map((v) => (
-                <Chip key={v.label} on={status === v.value} onClick={() => (setStatus(v.value), setPage(1))}>
+                <Chip key={v.label} on={status === v.value} onClick={() => (setStatus(v.value), setPage(1), setSelected(new Map()))}>
                   {v.label}
                 </Chip>
               ))}
@@ -325,7 +429,7 @@ export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) 
             <ErrorState message={data.error.message} onRetry={data.reload} />
           ) : !data.data ? (
             <SkeletonRows />
-          ) : data.data.items.length === 0 ? (
+          ) : rows.length === 0 ? (
             <EmptyState
               icon={Package}
               title={q || status ? "No matching records" : "No assets yet"}
@@ -334,16 +438,108 @@ export function AssetRegistry({ view }: { view?: "assigned" | "under_repair" }) 
             />
           ) : (
             <>
-              <ul className="divide-y divide-line">
-                {data.data.items.map((a) => (
-                  <AssetRow key={`${a.id}-${a.group?.count ?? 1}`} a={a} />
+              <DataTable
+                rows={rows}
+                columns={COLUMNS}
+                rowKey={rowKey}
+                rowLabel={(a) => a.name}
+                href={(a) => `/asset/${a.id}`}
+                selected={new Set(selected.keys())}
+                onSelect={select}
+                sort={sort}
+                onSort={(v) => (setSort(v), setPage(1))}
+                caption="Assets"
+                expand={{
+                  label: (a) => (a.group ? `the ${a.group.count} items` : null),
+                  render: (a) => (
+                    <ul className="divide-y divide-line rounded-[var(--radius-ctl)] border border-line bg-sheet">
+                      {a.group!.members.map((m) => (
+                        <li key={m.id}>
+                          <Link href={`/asset/${m.id}`} className="flex items-center justify-between gap-3 px-3 py-2 text-[13px] hover:bg-canvas">
+                            <span className="tabular min-w-0 truncate">
+                              <span className="font-medium">SN {m.serial_number}</span> <span className="text-ink-3">· {m.reference}</span>
+                            </span>
+                            {a.holder && <span className="shrink-0 text-[12px] text-ink-3">{m.acknowledged ? "Acknowledged" : "Not yet acknowledged"}</span>}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  ),
+                }}
+              />
+              <ul className="divide-y divide-line lg:hidden">
+                {rows.map((a) => (
+                  <AssetRow key={rowKey(a)} a={a} select={selecting ? { on: selected.has(rowKey(a)), toggle: (on) => select([rowKey(a)], on) } : undefined} />
                 ))}
               </ul>
-              <Pager page={page} pageSize={25} total={data.data.total} onPage={setPage} />
+              <Pager page={page} pageSize={pageSize} total={data.data.total} onPage={setPage} onPageSize={(n) => (setPageSize(n), setPage(1))} />
             </>
           )}
         </Panel>
       </div>
+      {/* room so the selection bar never covers the last row */}
+      {selected.size > 0 && <div className="h-20" aria-hidden="true" />}
+      <BulkBar count={chosenIds.length} onClear={clear}>
+        <BulkAction icon={UserPlus} label="Issue" onClick={() => setBulk("issue")} disabled={!allIssuable} title={allIssuable ? undefined : "Only items in stock can be issued"} />
+        <BulkAction icon={Download} label="Export" onClick={exportSelected} />
+        <BulkAction icon={Boxes} label="Move to Consumables" short="To stock" onClick={() => setBulk("stock")} />
+      </BulkBar>
+      <RecordDialog
+        open={bulk === "issue"}
+        onClose={() => setBulk(null)}
+        title={`Issue ${chosenIds.length} item${chosenIds.length === 1 ? "" : "s"}`}
+        description={`${chosen.map((a) => (a.group ? `${a.name} × ${a.group.count}` : a.name)).join(", ")}. Issued together: one acknowledgement and one issuance form.`}
+        fields={[
+          { name: "employee_id", label: "Issue to", type: "person", required: true, placeholder: "Choose a person" },
+          { name: "date_issued", label: "Date issued", type: "date", half: true, more: true },
+          { name: "condition", label: "Condition at issue", type: "select", options: CONDITIONS, half: true, more: true },
+          { name: "note", label: "Note", type: "textarea", more: true },
+        ]}
+        submitLabel={`Issue ${chosenIds.length}`}
+        proof={{
+          url: (r) => {
+            const ev = (r as { event_id?: number } | undefined)?.event_id;
+            return ev ? `/api/v1/assets/events/${ev}/proof` : null;
+          },
+          title: "Proof of handover",
+          note: "optional · the items with the person receiving them",
+          label: "Issue",
+        }}
+        onSubmit={async (p) => {
+          const r = await post<{ issue_ref: string; count: number; event_id: number; holder: Person }>("/api/v1/assets/issue", { ...p, asset_ids: chosenIds });
+          toast(`Issued ${r.count} item${r.count === 1 ? "" : "s"} to ${r.holder.name} · ${r.issue_ref}`);
+          clear();
+          invalidate();
+          return r;
+        }}
+      />
+      <RecordDialog
+        open={bulk === "stock"}
+        onClose={() => setBulk(null)}
+        title="Move to Consumables & Stock"
+        description={`Every record of ${items.map((a) => a.name).join(", ")} becomes one stock line each, counted in pieces. Pieces with people are recorded as issued to them. Serial numbers are dropped; photos and files move along.`}
+        fields={[
+          { name: "location", label: "Storage location", required: true, half: true, placeholder: "e.g. Supply cabinet" },
+          { name: "unit", label: "Unit", required: true, half: true },
+        ]}
+        initial={{ unit: "pc" }}
+        submitLabel={`Move ${items.length} item${items.length === 1 ? "" : "s"}`}
+        onSubmit={async (p) => {
+          const done: string[] = [];
+          for (const a of items) {
+            try {
+              const r = await post<{ item_code: string }>(`/api/v1/assets/${a.id}/to-stock`, p);
+              done.push(r.item_code);
+            } catch (e) {
+              toast(`${a.name}: ${(e as ApiError).message}`, "error");
+            }
+          }
+          if (done.length) toast(`Moved to Consumables & Stock · ${done.join(", ")}`);
+          clear();
+          invalidate();
+          if (done.length === items.length && items.length === 1) router.push("/assets/inventory");
+        }}
+      />
       <RecordDialog
         open={creating}
         onClose={() => setCreating(false)}

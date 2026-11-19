@@ -227,7 +227,7 @@ export function RegistrationsPage({ kind = "all" }: { kind?: "all" | "sec-gis" |
         fields={REG_FIELDS}
         initial={{ registration_type: defaultType }}
         submitLabel="Add"
-        scan={{ kind: "registration", attachTo: "registration" }}
+        attach={{ ownerType: "registration" }}
         onSubmit={async (p) => {
           const r = await post<Reg>("/api/v1/compliance/registrations", p);
           toast(`Added · ${r.reference}`);
@@ -412,7 +412,7 @@ export function RegistrationDetailView({ id }: { id: number }) {
         title={spec?.title ?? ""}
         fields={spec ? [...spec.fields] : []}
         initial={spec && "initial" in spec ? spec.initial : undefined}
-        scan={dialog === "renew" ? { kind: "registration", attachTo: "registration", ownerId: r.id } : undefined}
+        attach={dialog === "renew" ? { ownerType: "registration", ownerId: r.id, title: "Attach the renewed document" } : undefined}
         onSubmit={async (p) => {
           await api(spec!.url, { method: "method" in spec! ? spec.method : "POST", json: { ...p, ...("extra" in spec! ? spec.extra : {}) } });
           toast(spec!.done);

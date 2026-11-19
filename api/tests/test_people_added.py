@@ -3,8 +3,6 @@
 import io
 from datetime import date
 
-from PIL import Image, ImageDraw, ImageFont
-
 
 def add(user, **body):
     return user.post("/api/v1/directory/people", body)
@@ -64,18 +62,3 @@ def test_added_passenger_flows_into_travel_pdf(users, client):
 
     text = "".join(pg.extract_text() for pg in PdfReader(io.BytesIO(client.get(doc["url"], headers=admin.h).content)).pages)
     assert "Liza Cruz" in text and "Female" in text and "35 years" in text
-
-
-def test_unknown_passport_holder_is_offered_as_new_person(users, client):
-    admin = users["admin"]
-    img = Image.new("RGB", (1400, 760), "white")
-    d = ImageDraw.Draw(img)
-    for y, t, s in [(60, "REPUBLIKA NG PILIPINAS / PASSPORT", 34), (100, "Passport No.: P5512345B", 28), (140, "Surname: VILLANUEVA", 28), (190, "Given names: ROSARIO", 28),
-                    (240, "Middle name: DELA PAZ", 28), (290, "Sex: F", 28), (340, "Date of birth: 12 MAR 1985", 28), (390, "Date of expiry: 11 MAR 2033", 28)]:
-        d.text((80, y), t, fill="black", font=ImageFont.truetype("C:/Windows/Fonts/arial.ttf", s))
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    r = client.post("/api/v1/scan", headers=admin.h, data={"kind": "travel_document"}, files={"file": ("p.png", buf.getvalue(), "image/png")}).json()
-    assert "employee_id" not in r["fields"]
-    assert r["person"] == {"first_name": "Rosario", "middle_name": "Dela Paz", "last_name": "Villanueva", "gender": "female", "birth_date": "1985-03-12"}
-    assert "P5512345B" not in str(r)

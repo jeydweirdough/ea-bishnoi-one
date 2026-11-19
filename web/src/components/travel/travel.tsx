@@ -646,7 +646,7 @@ export function DocumentsPage({ view = "all" }: { view?: DocView }) {
         fields={creating === "passport" ? docFields("passport", "employee") : visaFields}
         initial={{ status: "active", holder_kind: expat ? "expat" : "employee" }}
         submitLabel="Add"
-        scan={{ kind: "travel_document", attachTo: "travel_document" }}
+        attach={{ ownerType: "travel_document", title: "Attach a copy of the passport or visa" }}
         onSubmit={async (p) => {
           const kind = creating!;
           const d = await post<{ id: number }>("/api/v1/travel/documents", { ...p, doc_type: kind, holder_kind: kind === "visa" ? (p.holder_kind ?? "employee") : "employee" });
