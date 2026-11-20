@@ -1,6 +1,6 @@
 "use client";
 
-import { createElement, useEffect, useId, useRef, useState } from "react";
+import { createElement, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Ellipsis, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -14,7 +14,36 @@ export function MoreMenu({ actions, label = "More actions" }: { actions: MenuAct
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
+  const menu = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const id = useId();
+
+  // Keep the menu on screen: line it up with the button's right edge (left edge if that fits better),
+  // never past the screen edges, and open upwards when there's no room below.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const btn = root.current?.querySelector("button")?.getBoundingClientRect();
+      const m = menu.current;
+      if (!btn || !m) return;
+      const gap = 8, edge = 12;
+      const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+      const w = m.offsetWidth, h = m.offsetHeight;
+      let left = btn.right - w;
+      if (left < edge) left = btn.left;
+      left = Math.max(edge, Math.min(left, vw - w - edge));
+      let top = btn.bottom + gap;
+      if (top + h > vh - edge && btn.top - gap - h >= edge) top = btn.top - gap - h;
+      setPos({ left, top });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -27,7 +56,7 @@ export function MoreMenu({ actions, label = "More actions" }: { actions: MenuAct
     };
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
-    items.current[0]?.focus();
+    items.current[0]?.focus({ preventScroll: true });
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
@@ -53,7 +82,10 @@ export function MoreMenu({ actions, label = "More actions" }: { actions: MenuAct
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setPos(null);
+          setOpen((o) => !o);
+        }}
         className={cn(
           "flex size-11 items-center justify-center rounded-[var(--radius-ctl)] border bg-sheet text-ink-2 transition-colors duration-150 hover:border-edge hover:text-ink md:size-10",
           open ? "border-ink text-ink" : "border-line",
@@ -67,7 +99,9 @@ export function MoreMenu({ actions, label = "More actions" }: { actions: MenuAct
           role="menu"
           aria-label={label}
           onKeyDown={onMenuKey}
-          className="rise-in absolute right-0 z-30 mt-2 w-max min-w-[220px] max-w-[300px] rounded-[var(--radius-panel)] border border-line bg-sheet p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.18)] max-lg:left-0 max-lg:right-auto"
+          ref={menu}
+          style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0, opacity: 0 }}
+          className="rise-in fixed z-50 w-max min-w-[220px] max-w-[min(320px,calc(100vw-24px))] rounded-[var(--radius-panel)] border border-line bg-sheet p-1.5 shadow-[0_12px_32px_-12px_rgb(0_0_0/0.18)]"
         >
           {actions.map((a, i) => (
             <button

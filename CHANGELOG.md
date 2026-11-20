@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.1 · 2026-11-21
+
+- Phone layout: even action buttons with destructive actions set apart; More menu stays on screen
+
 ## v1.1.0 · 2026-11-21
 
 - Say who has to acknowledge an issued asset

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Ban, Check, ChevronRight, CreditCard, Files, HandCoins, Landmark, Lock, Pencil, Plus, RefreshCcw, Send, X } from "lucide-react";
 import { api, fmtDate, invalidate, post, qs, useApi, type ApiError, type Attachment, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
-import { Button, Chip } from "@/components/ui/controls";
+import { ActionRow, Button, Chip } from "@/components/ui/controls";
 import { EmptyState, ErrorState, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
@@ -349,7 +349,14 @@ export function BankCaseView({ id }: { id: number }) {
         </div>
       </header>
       {open && (
-        <section className="mt-6 flex flex-wrap gap-2 rounded-[var(--radius-panel)] border border-ink bg-sheet p-4 sm:p-5">
+        <section className="mt-6 rounded-[var(--radius-panel)] border border-ink bg-sheet p-4 sm:p-5">
+          <ActionRow
+            danger={
+              <Button variant="danger" icon={Ban} onClick={() => setDialog("cancel")}>
+                Cancel case
+              </Button>
+            }
+          >
           {c.status === "open" && (
             <Button variant="primary" icon={Send} disabled={!ready} onClick={() => act("submit")}>
               {ready ? "Mark as submitted to bank" : "Complete requirements to submit"}
@@ -375,17 +382,15 @@ export function BankCaseView({ id }: { id: number }) {
               <Button icon={Check} onClick={() => setDialog("finance_confirm")}>
                 Record Finance confirmation
               </Button>
-              <Button variant="ghost" icon={X} onClick={() => setDialog("finance_reject")}>
+              <Button icon={X} onClick={() => setDialog("finance_reject")}>
                 Record Finance rejection
               </Button>
             </>
           )}
-          <Button variant="ghost" icon={Check} disabled={["pending", "sent"].includes(c.finance_status)} onClick={() => act("complete")}>
+          <Button icon={Check} disabled={["pending", "sent"].includes(c.finance_status)} onClick={() => act("complete")}>
             Complete
           </Button>
-          <Button variant="ghost" icon={Ban} onClick={() => setDialog("cancel")}>
-            Cancel
-          </Button>
+          </ActionRow>
         </section>
       )}
       <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6">

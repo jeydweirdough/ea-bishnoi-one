@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { CircleCheck, Package, Plus, Search, Send, TriangleAlert, Trash2, type LucideIcon } from "lucide-react";
 import { api, useApi, type ApiError } from "@/lib/api";
 import { Mark } from "@/components/icons";
-import { Button, Field, Input, Segmented, Select, Switch, Textarea } from "@/components/ui/controls";
+import { ActionRow, Button, Field, Input, Segmented, Select, Switch, Textarea } from "@/components/ui/controls";
 import { PendingPhotos, shrink } from "@/components/ui/photos";
 import { cn } from "@/lib/cn";
 
@@ -358,7 +358,7 @@ function SentCard({ sent, onAnother, onCheck }: { sent: Sent; onAnother: () => v
           ))}
         </ul>
       )}
-      <div className="mt-6 flex flex-wrap gap-2">
+      <ActionRow className="mt-6">
         <Button variant="primary" icon={Plus} onClick={onAnother}>
           Send another
         </Button>
@@ -367,7 +367,7 @@ function SentCard({ sent, onAnother, onCheck }: { sent: Sent; onAnother: () => v
             Check status
           </Button>
         )}
-      </div>
+      </ActionRow>
     </div>
   );
 }

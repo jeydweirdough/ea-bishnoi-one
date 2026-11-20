@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
 settings = get_settings()
 app = FastAPI(
     title="Executive Admin API",
-    version="1.1.0",
+    version="1.1.1",
     lifespan=lifespan,
     # The interactive API docs are for development only.
     docs_url="/docs" if settings.is_dev else None,

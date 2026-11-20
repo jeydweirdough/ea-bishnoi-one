@@ -5,7 +5,7 @@ import { useState } from "react";
 import { BedDouble, BookUser, Check, ChevronRight, CircleCheck, Globe, IdCard, ListChecks, Lock, Pencil, Plane, Plus, Ticket, X, Ban, type LucideIcon } from "lucide-react";
 import { api, fmtDate, invalidate, post, qs, useApi, type ApiError, type Attachment, type Page, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
-import { Button, Chip } from "@/components/ui/controls";
+import { ActionRow, Button, Chip } from "@/components/ui/controls";
 import { EmptyState, ErrorState, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
@@ -256,7 +256,14 @@ export function FlightDetailView({ id }: { id: number }) {
           <p className="mt-1 text-[14px] text-ink-2">
             {f.checklist_total ? `${f.checklist_done} of ${f.checklist_total} travel requirements checked.` : "No travel requirements apply."}
           </p>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <ActionRow
+            className="mt-4"
+            danger={
+              <Button variant="danger" icon={Ban} onClick={() => setDialog("cancelled")}>
+                Cancel trip
+              </Button>
+            }
+          >
             {f.status === "requested" && (
               <Button variant="primary" icon={Ticket} onClick={() => setDialog("booked")}>
                 Mark booked
@@ -275,10 +282,7 @@ export function FlightDetailView({ id }: { id: number }) {
             <Button icon={BedDouble} onClick={() => setDialog("hotel")}>
               Add hotel
             </Button>
-            <Button variant="ghost" icon={Ban} onClick={() => setDialog("cancelled")}>
-              Cancel
-            </Button>
-          </div>
+          </ActionRow>
         </section>
       )}
 

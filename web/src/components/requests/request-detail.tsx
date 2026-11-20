@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { api, fmtDate, fmtDateTime, fmtRelative, fmtSize, invalidate, post, useApi, type ApiError, type Priority, type RequestDetail as Detail } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
-import { Button, Field, Segmented, Switch, Textarea, buttonClass } from "@/components/ui/controls";
+import { ActionRow, Button, Field, Segmented, Switch, Textarea, buttonClass } from "@/components/ui/controls";
 import { FileDrop } from "@/components/ui/file-drop";
 import { Dialog, ErrorState, Panel, useToast } from "@/components/ui/feedback";
 import { KIND_ICON, PRIORITY_LABEL, PriorityLabel, SlaLabel, StatusBadge } from "@/components/ui/status";
@@ -192,7 +192,16 @@ export function RequestDetailView({ id }: { id: number }) {
         <p className="text-[15px] font-bold">{next.title}</p>
         {next.body && <p className="mt-1 text-[14px] leading-relaxed text-ink-2">{next.body}</p>}
         {(flowActions.length > 0 || has("edit") || has("delete") || has("cancel")) && (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <ActionRow
+            className="mt-4"
+            danger={
+              has("cancel") && (
+                <Button variant="danger" icon={Ban} onClick={() => trigger("cancel")}>
+                  Cancel request
+                </Button>
+              )
+            }
+          >
             {has("edit") && (
               <Link href={`/r/${d.id}/edit`} className={buttonClass(d.status === "returned" ? "primary" : "secondary")}>
                 <Pencil className="size-4" strokeWidth={1.75} aria-hidden="true" />
@@ -205,16 +214,11 @@ export function RequestDetailView({ id }: { id: number }) {
               </Button>
             ))}
             {has("delete") && (
-              <Button variant="ghost" icon={Trash2} onClick={removeDraft}>
+              <Button icon={Trash2} onClick={removeDraft}>
                 Delete draft
               </Button>
             )}
-            {has("cancel") && (
-              <Button variant="danger" icon={Ban} onClick={() => trigger("cancel")} className="sm:ml-auto">
-                Cancel request
-              </Button>
-            )}
-          </div>
+          </ActionRow>
         )}
         {error && !dialog && (
           <p role="alert" className="mt-3 text-[13.5px] text-danger">

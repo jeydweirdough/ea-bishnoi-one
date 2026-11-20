@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { api, fmtDateTime, fmtRelative, invalidate, post, qs, useApi, type ApiError, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
-import { Button, Chip, Input, Select } from "@/components/ui/controls";
+import { ActionRow, Button, Chip, Input, Select } from "@/components/ui/controls";
 import { CountStrip, Dialog, EmptyState, ErrorState, Pager, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
@@ -836,7 +836,7 @@ export function StockItemView({ id }: { id: number }) {
           </div>
         ))}
       </dl>
-      <div className="mt-5 flex flex-wrap gap-2">
+      <ActionRow className="mt-5">
         {actions
           .filter(([, , , ok]) => ok)
           .map(([k, I, label], n) => (
@@ -844,7 +844,7 @@ export function StockItemView({ id }: { id: number }) {
               {label}
             </Button>
           ))}
-      </div>
+      </ActionRow>
       <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-6">
         {/* Photos first on phones; top of the right column on desktop. */}
         <div className="lg:col-start-2 lg:row-start-1">

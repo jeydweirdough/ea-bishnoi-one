@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { api, fmtDate, fmtRelative, invalidate, post, qs, useApi, type Attachment, type Page, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
-import { Button, Chip, Input } from "@/components/ui/controls";
+import { ActionRow, Button, Chip, Input } from "@/components/ui/controls";
 import { CountStrip, EmptyState, ErrorState, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
@@ -322,17 +322,17 @@ export function RegistrationDetailView({ id }: { id: number }) {
       </ul>
 
       {open && (
-        <div className="mt-5 flex flex-wrap gap-2">
+        <ActionRow className="mt-5">
           <Button variant="primary" icon={RefreshCcw} onClick={() => setDialog("renew")}>
             Record renewal
           </Button>
           <Button icon={UserPlus} onClick={() => setDialog("assign")}>
             Assign renewal
           </Button>
-          <Button variant="ghost" icon={Check} onClick={() => setDialog("completed")}>
+          <Button icon={Check} onClick={() => setDialog("completed")}>
             Mark completed
           </Button>
-        </div>
+        </ActionRow>
       )}
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6">
@@ -560,7 +560,14 @@ export function BocDetailView({ id }: { id: number }) {
         </ol>
         {c.status === "cancelled" && <p className="mt-3 text-[14px] font-medium text-danger">Cancelled</p>}
         {!closed && (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <ActionRow
+            className="mt-4"
+            danger={
+              <Button variant="danger" icon={Ban} onClick={() => setDialog("cancel")}>
+                Cancel case
+              </Button>
+            }
+          >
             {next && (
               <Button variant="primary" icon={Check} onClick={() => setDialog("advance")}>
                 Mark {MILESTONE_LABEL[next].toLowerCase()}
@@ -569,10 +576,7 @@ export function BocDetailView({ id }: { id: number }) {
             <Button icon={MessageSquare} onClick={() => setDialog("note")}>
               Add note
             </Button>
-            <Button variant="ghost" icon={Ban} onClick={() => setDialog("cancel")}>
-              Cancel case
-            </Button>
-          </div>
+          </ActionRow>
         )}
       </section>
 

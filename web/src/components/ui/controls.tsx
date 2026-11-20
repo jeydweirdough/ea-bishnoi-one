@@ -213,3 +213,27 @@ export function Chip({ on, onClick, children, count }: { on: boolean; onClick: (
     </button>
   );
 }
+
+/**
+ * A record's actions. On phones: the main action across the full width, the others in even pairs,
+ * and a destructive action (Retire, Cancel) set apart below a rule. From `sm` up: one row, with the
+ * destructive action pushed to the right.
+ */
+export function ActionRow({ children, danger, className }: { children?: React.ReactNode; danger?: React.ReactNode; className?: string }) {
+  return (
+    <div className={cn("flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center", className)}>
+      <div
+        className={cn(
+          "grid grid-cols-2 gap-2 empty:hidden sm:flex sm:flex-wrap",
+          "[&>*]:min-w-0 [&>*:first-child]:col-span-2 [&>*:last-child:nth-child(even)]:col-span-2",
+          "max-sm:[&>*]:h-auto max-sm:[&>*]:min-h-11 max-sm:[&>*]:w-full max-sm:[&>*]:whitespace-normal max-sm:[&>*]:py-2 max-sm:[&>*]:text-center max-sm:[&>*]:leading-snug",
+        )}
+      >
+        {children}
+      </div>
+      {danger && (
+        <div className="mt-1 border-t border-line pt-3 max-sm:[&>*]:w-full sm:ml-auto sm:mt-0 sm:border-0 sm:pt-0">{danger}</div>
+      )}
+    </div>
+  );
+}

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Ban, Building, CalendarClock, Check, ChevronRight, FileSignature, House, Landmark, Pencil, Plus, RefreshCcw, Send, TriangleAlert, Users, Wallet, X } from "lucide-react";
 import { api, fmtDate, fmtRelative, invalidate, post, qs, useApi, type Attachment, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
-import { Button, Chip, Input } from "@/components/ui/controls";
+import { ActionRow, Button, Chip, Input } from "@/components/ui/controls";
 import { CountStrip, EmptyState, ErrorState, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
 import { ModuleShell } from "@/components/ops/module-shell";
@@ -386,16 +386,20 @@ export function ContractDetailView({ id }: { id: number }) {
         </div>
       </header>
       {live && (
-        <div className="mt-5 flex flex-wrap gap-2">
+        <ActionRow
+          className="mt-5"
+          danger={
+            me?.role === "admin" && (
+              <Button variant="danger" icon={Ban} onClick={() => setDialog("terminate")}>
+                Terminate
+              </Button>
+            )
+          }
+        >
           <Button variant="primary" icon={RefreshCcw} onClick={() => setDialog("renew")}>
             Record renewal
           </Button>
-          {me?.role === "admin" && (
-            <Button variant="ghost" icon={Ban} onClick={() => setDialog("terminate")}>
-              Terminate
-            </Button>
-          )}
-        </div>
+        </ActionRow>
       )}
       {c.renewed_to && (
         <p className="mt-5 text-[14px]">

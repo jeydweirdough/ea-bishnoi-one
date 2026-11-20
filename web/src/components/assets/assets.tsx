@@ -29,7 +29,7 @@ import {
 import { useRouter } from "next/navigation";
 import { api, fmtDate, fmtDateTime, fmtRelative, fmtSize, invalidate, post, qs, useApi, ApiError, type Attachment, type Page, type Person } from "@/lib/api";
 import { Breadcrumbs, PageFrame } from "@/components/page/module-page";
-import { Button, Chip, Field, Input, Select, Textarea, buttonClass } from "@/components/ui/controls";
+import { ActionRow, Button, Chip, Field, Input, Select, Textarea, buttonClass } from "@/components/ui/controls";
 import { ProofSection, type Proof } from "@/components/ui/proof-list";
 import { CountStrip, Dialog, EmptyState, ErrorState, Pager, Panel, SkeletonRows, useToast } from "@/components/ui/feedback";
 import { RecordDialog, fromRecord, type FieldDef } from "@/components/ui/record-form";
@@ -969,7 +969,16 @@ export function AssetDetailView({ id }: { id: number }) {
                   ? `At ${a.location}.`
                   : "Not issued to anyone."}
           </p>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <ActionRow
+            className="mt-4"
+            danger={
+              has("retire") && (
+                <Button variant="danger" icon={Archive} onClick={() => setDialog("retire")}>
+                  Retire asset
+                </Button>
+              )
+            }
+          >
             {has("acknowledge") && (
               <Button variant="primary" icon={CircleCheck} busy={busy} onClick={acknowledge}>
                 {n > 1 ? `Acknowledge all ${n}` : "Acknowledge receipt"}
@@ -983,17 +992,12 @@ export function AssetDetailView({ id }: { id: number }) {
                 </Button>
               ))}
             {a.holder && staff && (
-              <Link href={`/print/asset/${a.id}`} target="_blank" className={buttonClass("ghost")}>
+              <Link href={`/print/asset/${a.id}`} target="_blank" className={buttonClass("secondary")}>
                 <Printer className="size-4" strokeWidth={1.75} aria-hidden="true" />
                 Issuance form
               </Link>
             )}
-            {has("retire") && (
-              <Button variant="danger" icon={Archive} onClick={() => setDialog("retire")} className="sm:ml-auto">
-                Retire asset
-              </Button>
-            )}
-          </div>
+          </ActionRow>
           {staff && has("edit") && (
             <p className="mt-4 border-t border-line pt-3 text-[13px] text-ink-2">
               Counted in pieces, like clips or pens?{" "}
