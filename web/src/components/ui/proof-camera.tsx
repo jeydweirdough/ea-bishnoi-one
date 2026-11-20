@@ -86,6 +86,19 @@ async function stamped(src: CanvasImageSource, w: number, h: number, label: stri
   return f;
 }
 
+/** An ordinary photo (item photos, documents): no stamp, no location. Drawn through a canvas, so hidden photo data is left behind. */
+async function plain(src: CanvasImageSource, w: number, h: number, at = new Date()): Promise<File> {
+  const k = Math.min(1, 2560 / Math.max(w, h));
+  const c = document.createElement("canvas");
+  c.width = Math.round(w * k);
+  c.height = Math.round(h * k);
+  c.getContext("2d")!.drawImage(src, 0, 0, c.width, c.height);
+  const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/jpeg", 0.9));
+  const f = new File([blob!], `photo-${at.toISOString().slice(0, 19).replace(/[-:T]/g, "")}.jpg`, { type: "image/jpeg" });
+  proofMeta.set(f, { source: "camera", taken_at: at.toISOString() });
+  return f;
+}
+
 /** A photo from the phone's own camera app, stamped after it comes back. */
 export async function stampFile(file: File, label: string, fix: Fix): Promise<File> {
   try {
@@ -102,7 +115,11 @@ export async function stampFile(file: File, label: string, fix: Fix): Promise<Fi
 export const canUseLiveCamera = () => typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && typeof window !== "undefined" && window.isSecureContext;
 
 /** Full-screen camera. Returns the stamped shots when the person taps Done. */
-export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label: string; max: number; onDone: (files: File[]) => void; onClose: () => void; onFallback: () => void }) {
+/**
+ * The full-screen camera. With a `label` (photo proof) each shot is stamped with date, time and location;
+ * without one (item photos, documents) it takes plain photos and doesn't ask for the location.
+ */
+export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label?: string; max: number; onDone: (files: File[]) => void; onClose: () => void; onFallback: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const [facing, setFacing] = useState<"environment" | "user">("environment");
@@ -110,7 +127,7 @@ export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label
   const [flash, setFlash] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [ready, setReady] = useState(false);
-  const { fix, state } = useLocation(true);
+  const { fix, state } = useLocation(Boolean(label));
   const fallback = useRef(onFallback);
   useEffect(() => {
     fallback.current = onFallback;
@@ -163,7 +180,7 @@ export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label
     if (!v || !v.videoWidth || shots.length >= max) return;
     setFlash(true);
     setTimeout(() => setFlash(false), 120);
-    const f = await stamped(v, v.videoWidth, v.videoHeight, label, fix);
+    const f = label ? await stamped(v, v.videoWidth, v.videoHeight, label, fix) : await plain(v, v.videoWidth, v.videoHeight);
     setShots((cur) => [...cur, { file: f, url: URL.createObjectURL(f) }]);
   }, [fix, label, max, shots.length]);
 
@@ -178,12 +195,13 @@ export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label
           <button type="button" onClick={onClose} aria-label="Close the camera" className="flex size-11 items-center justify-center rounded-full bg-black/40">
             <X className="size-5" strokeWidth={1.75} />
           </button>
-          <span className="rounded-full bg-black/40 px-3 py-1 text-[12.5px] font-medium">{label}</span>
+          <span className="rounded-full bg-black/40 px-3 py-1 text-[12.5px] font-medium">{label ?? "Camera"}</span>
           <button type="button" onClick={() => setFacing((f) => (f === "environment" ? "user" : "environment"))} aria-label="Switch camera" className="flex size-11 items-center justify-center rounded-full bg-black/40">
             <SwitchCamera className="size-5" strokeWidth={1.75} />
           </button>
         </div>
         {/* What will be stamped on the photo */}
+        {label && (
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-4 pt-10 pb-3 text-[13px] leading-snug">
           <p className="font-bold">{stampTime(now)}</p>
           <p className="flex items-center gap-1.5 text-white/85">
@@ -191,6 +209,7 @@ export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label
             {state === "waiting" ? "Finding your location…" : stampPlace(fix?.lat, fix?.lng, fix?.accuracy)}
           </p>
         </div>
+        )}
         {!ready && <p className="absolute inset-0 flex items-center justify-center text-[14px] text-white/70">Opening the camera…</p>}
       </div>
       <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-3 pb-[max(env(safe-area-inset-bottom),16px)]">

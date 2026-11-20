@@ -153,7 +153,8 @@ export function FileDrop({
     const fix = await currentFix();
     take(await Promise.all(files.map((f) => stampFile(f, stamp, fix))));
   };
-  const openCamera = () => (stamp && live ? setCameraOpen(true) : cameraInput.current?.click());
+  // The in-app camera wherever the browser allows it (photo proof and plain photos alike); the phone's camera app otherwise.
+  const openCamera = () => (live ? setCameraOpen(true) : cameraInput.current?.click());
 
   const cameraOk = camera ?? allowsImages(accept);
   const withCamera = cameraOk && (touch || Boolean(stamp && live));
@@ -212,7 +213,7 @@ export function FileDrop({
         </p>
       )}
       {children}
-      {cameraOpen && stamp && (
+      {cameraOpen && (
         <ProofCamera
           label={stamp}
           max={multiple ? 10 : 1}

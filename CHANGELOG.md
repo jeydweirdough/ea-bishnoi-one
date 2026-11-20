@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.2 · 2026-11-21
+
+- In-app camera for every Take photo: item photos, attachments and documents (plain photos; proof photos stay stamped)
+
 ## v1.1.1 · 2026-11-21
 
 - Phone layout: even action buttons with destructive actions set apart; More menu stays on screen
