@@ -119,7 +119,7 @@ class ItemPatch(ItemIn):
     version: int
 
 
-ITEM_CODE_PREFIX = {"Equipment": "EQ", "Supplies": "SU", "Spare Parts": "SP", "Consumables": "CS"}
+ITEM_CODE_PREFIX = {"Equipment": "EQ", "Supplies": "SU", "Spare Parts": "SP", "Consumables": "CS", "Promotional Materials": "PM"}
 
 
 async def next_item_code(session, company_id: int, category: str) -> str:

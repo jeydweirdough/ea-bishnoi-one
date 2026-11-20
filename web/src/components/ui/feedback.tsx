@@ -133,7 +133,8 @@ export function Dialog({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-6">
-      <div className="fade-in absolute inset-0 bg-ink/30" onClick={onClose} aria-hidden="true" />
+      {/* Figure-ground: the page behind drops well back, so the dialog is the one thing to look at. */}
+      <div className="fade-in absolute inset-0 bg-ink/60" onClick={onClose} aria-hidden="true" />
       <div
         ref={ref}
         role="dialog"
@@ -271,13 +272,21 @@ export function Pager({ page, pageSize, total, onPage, onPageSize, sizes = [10, 
 
 /* ---------------------------------------------------------------- count strip */
 
-/** Live counts as one quiet strip instead of a wall of stat cards. Each count links to its list. */
-export function CountStrip({ items }: { items: { icon: LucideIcon; label: string; value?: number | string; href: string; danger?: boolean }[] }) {
+/**
+ * Live counts as one quiet strip instead of a wall of stat cards. Each count links to its list.
+ * On phones the counts are a row of cards that scrolls sideways, sized so the next card is cut
+ * off at the edge: a half-shown card says "there is more, swipe".
+ */
+export function CountStrip({ items }: { items: { icon: LucideIcon; label: string; value?: number | string; href: string; danger?: boolean; onClick?: () => void }[] }) {
   return (
-    <ul className="grid grid-cols-2 overflow-hidden rounded-[var(--radius-panel)] border border-line bg-sheet sm:flex sm:divide-x sm:divide-line">
-      {items.map(({ icon: Icon, label, value, href, danger }, i) => (
-        <li key={label} className={cn("sm:flex-1", i % 2 === 1 && "border-l border-line sm:border-l-0", i > 1 && "border-t border-line sm:border-t-0")}>
-          <Link href={href} className="flex h-full items-center gap-3 px-4 py-3.5 transition-colors duration-150 hover:bg-canvas">
+    <ul className="no-scrollbar -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-2 overflow-x-auto px-4 sm:mx-0 sm:snap-none sm:gap-0 sm:overflow-hidden sm:rounded-[var(--radius-panel)] sm:border sm:border-line sm:bg-sheet sm:px-0 sm:divide-x sm:divide-line">
+      {items.map(({ icon: Icon, label, value, href, danger, onClick }) => (
+        <li key={label} className="w-[42%] min-w-[136px] shrink-0 snap-start overflow-hidden rounded-[var(--radius-panel)] border border-line bg-sheet sm:w-auto sm:min-w-0 sm:flex-1 sm:rounded-none sm:border-0">
+          <Link
+            href={href}
+            onClick={onClick && ((e) => (e.preventDefault(), onClick()))}
+            className="flex h-full items-center gap-3 px-4 py-3.5 transition-colors duration-150 hover:bg-canvas"
+          >
             <Icon className={cn("size-[18px] shrink-0", danger && value ? "text-danger" : "text-ink-3")} strokeWidth={1.75} aria-hidden="true" />
             <span className="min-w-0">
               <span className={cn("tabular block text-[20px] font-bold leading-none", danger && value ? "text-danger" : "")}>{value ?? "–"}</span>

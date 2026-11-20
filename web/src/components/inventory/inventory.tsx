@@ -76,13 +76,18 @@ type Options = { categories: string[]; locations: string[]; can_adjust: boolean;
 const KIND_LABEL: Record<string, string> = { stock_in: "Stock in", issue: "Issued", use: "Used", transfer_out: "Transferred out", transfer_in: "Transferred in", return: "Returned", adjustment: "Adjustment", write_off: "Written off", reserve: "Reserved", release: "Released" };
 const KIND_ICON: Record<string, LucideIcon> = { stock_in: ArrowDownToLine, issue: ArrowUpFromLine, use: PackageMinus, transfer_out: ArrowLeftRight, transfer_in: ArrowLeftRight, return: Undo2, adjustment: SlidersHorizontal, write_off: Ban };
 
+const CATEGORIES = ["Equipment", "Supplies", "Spare Parts", "Consumables", "Promotional Materials"];
+const UNITS = ["pc", "box", "pack", "ream", "bottle", "set"];
+
 function itemFields(o?: Options, editing = false): FieldDef[] {
   return [
     { name: "name", label: "Item", required: true, placeholder: "e.g. HP 85A toner" },
     { name: "item_code", label: "Item code", half: true, placeholder: "Automatic", hint: editing ? undefined : "Leave empty to number it automatically" },
-    { name: "category", label: "Category", type: "select", options: o?.categories ?? ["Equipment", "Supplies", "Spare Parts", "Consumables"], required: true, half: true },
-    { name: "location", label: "Storage location", required: true, half: true, placeholder: "e.g. HQ stockroom" },
-    { name: "unit", label: "Unit", required: true, half: true },
+    // A handful of categories: one tap each, not a dropdown to open and scan.
+    { name: "category", label: "Category", type: "choice", options: o?.categories ?? CATEGORIES, required: true },
+    // The places stock already lives and the usual units, as one-tap answers.
+    { name: "location", label: "Storage location", required: true, half: true, placeholder: "e.g. HQ stockroom", suggest: o?.locations },
+    { name: "unit", label: "Unit", required: true, half: true, suggest: UNITS },
     ...(editing ? [] : [{ name: "opening_quantity", label: "Opening quantity", type: "number", half: true } as FieldDef]),
     { name: "reorder_level", label: "Reorder at", type: "number", half: true, hint: "Alert when available falls to this" },
     { name: "reorder_quantity", label: "Reorder quantity", type: "number", more: true, half: true },
@@ -106,6 +111,8 @@ export function InventoryPage() {
   const o = useApi<Options>("/api/v1/inventory/options");
   const [view, setView] = useState<View>("stock");
   const [creating, setCreating] = useState(false);
+  const [category, setCategory] = useState("");
+  const locations = o.data?.locations ?? [];
   return (
     <ModuleShell
       group="assets"
@@ -136,7 +143,7 @@ export function InventoryPage() {
           </Chip>
         ))}
       </div>
-      {view === "stock" && <StockView options={o.data} />}
+      {view === "stock" && <StockView options={o.data} category={category} setCategory={setCategory} />}
       {view === "fill" && <FillView />}
       {view === "counts" && <CountsView options={o.data} />}
       {view === "moves" && <MovesView />}
@@ -146,7 +153,8 @@ export function InventoryPage() {
         title="Add a consumable or stock item"
         description="For things counted by quantity, like bond paper, toner or cleaning supplies. The opening quantity is recorded as the first movement."
         fields={itemFields(o.data)}
-        initial={{ category: "Consumables", unit: "pc", opening_quantity: "0", reorder_level: "0" }}
+        // Start from what is already known: the category being browsed, the only stockroom.
+        initial={{ category: category || "Consumables", unit: "pc", location: locations.length === 1 ? locations[0] : "", opening_quantity: "0", reorder_level: "0" }}
         submitLabel="Add item"
         photos="inventory_item"
         proof={{
@@ -170,7 +178,7 @@ export function InventoryPage() {
   );
 }
 
-function StockView({ options }: { options?: Options }) {
+function StockView({ options, category, setCategory }: { options?: Options; category: string; setCategory: (c: string) => void }) {
   const toast = useToast();
   const router = useRouter();
   const [q, setQ] = useState("");
@@ -190,7 +198,7 @@ function StockView({ options }: { options?: Options }) {
     return () => clearTimeout(t);
   }, [q]);
   const data = useApi<{ items: Item[]; total: number; summary: { lines: number; low: number; reserved: number; value_php: string } }>(
-    `/api/v1/inventory/items${qs({ q: term, location, low, sort: sort.key, dir: sort.dir, page, page_size: pageSize })}`,
+    `/api/v1/inventory/items${qs({ q: term, category, location, low, sort: sort.key, dir: sort.dir, page, page_size: pageSize })}`,
   );
   const s = data.data?.summary;
   const rows = data.data?.items ?? [];
@@ -226,7 +234,7 @@ function StockView({ options }: { options?: Options }) {
       <CountStrip
         items={[
           { icon: Layers, label: "Stock lines", value: s?.lines, href: "/assets/inventory" },
-          { icon: TriangleAlert, label: "Low stock", value: s?.low, href: "/assets/inventory", danger: true },
+          { icon: TriangleAlert, label: "Low stock", value: s?.low, href: "/assets/inventory", danger: true, onClick: () => (setLow(true), setPage(1), setSelected(new Map())) },
           { icon: ClipboardList, label: "Units reserved", value: s?.reserved, href: "/assets/inventory" },
           { icon: Wallet, label: "Stock value (costed lines)", value: s ? (Number(s.value_php) > 0 ? peso(s.value_php) : "–") : undefined, href: "/assets/inventory" },
         ]}
@@ -244,12 +252,21 @@ function StockView({ options }: { options?: Options }) {
               <option key={l}>{l}</option>
             ))}
           </Select>
-          <Chip on={low} onClick={() => (setLow((v) => !v), setPage(1), setSelected(new Map()))}>
-            Low stock
-          </Chip>
-          <Button className="lg:hidden" variant={selecting ? "primary" : "secondary"} icon={ListChecks} onClick={() => (selecting ? clear() : setSelecting(true))}>
-            {selecting ? "Done" : "Select"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Chip on={low} onClick={() => (setLow((v) => !v), setPage(1), setSelected(new Map()))}>
+              Low stock
+            </Chip>
+            <Button className="ml-auto lg:hidden" variant={selecting ? "primary" : "secondary"} icon={ListChecks} onClick={() => (selecting ? clear() : setSelecting(true))}>
+              {selecting ? "Done" : "Select"}
+            </Button>
+          </div>
+        </div>
+        <div className="no-scrollbar flex gap-1.5 overflow-x-auto border-b border-line px-3 py-2.5 sm:px-5" role="group" aria-label="Category">
+          {["", ...(options?.categories ?? CATEGORIES)].map((c) => (
+            <Chip key={c || "all"} on={category === c} onClick={() => (setCategory(c), setPage(1), setSelected(new Map()))}>
+              {c || "All"}
+            </Chip>
+          ))}
         </div>
         {low && (data.data?.items.length ?? 0) > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-canvas px-4 py-2.5 text-[13.5px] sm:px-5">
@@ -264,7 +281,7 @@ function StockView({ options }: { options?: Options }) {
         ) : !data.data ? (
           <SkeletonRows />
         ) : data.data.items.length === 0 ? (
-          <EmptyState icon={Boxes} title={q || low || location ? "No matching records" : "No stock items yet"} body={q || low || location ? undefined : "Add items, or import your current stock list from Excel."} compact />
+          <EmptyState icon={Boxes} title={q || low || location || category ? "No matching records" : "No stock items yet"} body={q || low || location || category ? undefined : "Add items, or import your current stock list from Excel."} compact />
         ) : (
           <>
             <DataTable

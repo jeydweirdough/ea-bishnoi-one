@@ -91,7 +91,7 @@ export function CommandPalette() {
       }}
       onClick={(e) => e.target === e.currentTarget && setPaletteOpen(false)}
       aria-label="Search modules"
-      className="m-0 mx-auto mt-0 h-dvh max-h-none w-full max-w-none bg-sheet p-0 text-ink backdrop:bg-ink/25 backdrop:backdrop-blur-[2px] open:animate-[fade-in_160ms_var(--ease-out-expo)] md:mt-[12vh] md:h-auto md:max-h-[min(560px,76vh)] md:max-w-[640px] md:rounded-[14px] md:border md:border-line md:shadow-[var(--shadow-float)]"
+      className="m-0 mx-auto mt-0 h-dvh max-h-none w-full max-w-none bg-sheet p-0 text-ink backdrop:bg-ink/60 backdrop:backdrop-blur-[2px] open:animate-[fade-in_160ms_var(--ease-out-expo)] md:mt-[12vh] md:h-auto md:max-h-[min(560px,76vh)] md:max-w-[640px] md:rounded-[14px] md:border md:border-line md:shadow-[var(--shadow-float)]"
     >
       <div className="flex h-full flex-col md:max-h-[min(560px,76vh)]">
         <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 pt-[env(safe-area-inset-top)]">

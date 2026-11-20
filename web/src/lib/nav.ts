@@ -372,7 +372,7 @@ export const GROUPS: NavGroup[] = [
         code: "EA-03.6",
         summary: "Consumables, supplies and spare equipment counted by quantity, with every movement recorded, reorder alerts and counts.",
         step: 3,
-        fields: ["Item code (automatic)", "Item name", "Category — Equipment / Supplies / Spare Parts / Consumables", "Brand / model", "Unit", "Storage location", "Quantity on hand", "Reserved / available", "Reorder level and quantity", "Unit cost (PHP)", "Preferred supplier", "Serialized on issue", "Last counted date", "Status"],
+        fields: ["Item code (automatic)", "Item name", "Category — Equipment / Supplies / Spare Parts / Consumables / Promotional Materials", "Brand / model", "Unit", "Storage location", "Quantity on hand", "Reserved / available", "Reorder level and quantity", "Unit cost (PHP)", "Preferred supplier", "Serialized on issue", "Last counted date", "Status"],
         fieldsTitle: "Inventory item",
         note: "Added to the plan as Phase 2.3a. Stock moves in from Receiving Proof and out through approved supply requests.",
       },

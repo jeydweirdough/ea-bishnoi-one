@@ -20,7 +20,7 @@ from .models_ops import Money
 
 # ------------------------------------------------------------------ inventory
 
-INV_CATEGORIES = ["Equipment", "Supplies", "Spare Parts", "Consumables"]
+INV_CATEGORIES = ["Equipment", "Supplies", "Spare Parts", "Consumables", "Promotional Materials"]
 
 
 class InventoryItem(Base):

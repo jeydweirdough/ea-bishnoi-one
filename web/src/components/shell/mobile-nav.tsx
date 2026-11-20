@@ -151,7 +151,7 @@ function MenuSheet({ all }: { all: MenuLink[] }) {
       onClose={() => setMenuOpen(false)}
       onClick={(e) => e.target === e.currentTarget && setMenuOpen(false)}
       aria-label="More"
-      className="fixed inset-0 m-0 mt-auto max-h-[88dvh] w-full max-w-none rounded-t-[16px] bg-canvas p-0 text-ink shadow-[var(--shadow-float)] backdrop:bg-ink/30 open:animate-[sheet-up_220ms_var(--ease-out-expo)] lg:hidden"
+      className="fixed inset-0 m-0 mt-auto max-h-[88dvh] w-full max-w-none rounded-t-[16px] bg-canvas p-0 text-ink shadow-[var(--shadow-float)] backdrop:bg-ink/60 open:animate-[sheet-up_220ms_var(--ease-out-expo)] lg:hidden"
     >
       <div className="flex max-h-[88dvh] flex-col">
         <div className="relative flex shrink-0 items-center justify-between px-5 pb-2 pt-4">

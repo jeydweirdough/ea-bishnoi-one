@@ -256,3 +256,15 @@ def test_stock_sorting(users):
     rows = admin.get("/api/v1/inventory/items?q=Sort&sort=name").json()["items"]
     assert [r["name"] for r in rows] == ["Sort glue", "Sort tape"]
     assert admin.get("/api/v1/inventory/items?sort=price").status_code == 422
+
+
+def test_promotional_materials_category(users):
+    admin = users["admin"]
+    assert "Promotional Materials" in admin.get("/api/v1/inventory/options").json()["categories"]
+    r = item(admin, item_code=None, name="Venapto flyers", category="Promotional Materials", unit="pack", opening_quantity=20)
+    assert r.status_code == 201, r.text
+    p = r.json()
+    assert p["item_code"].startswith("GPI-PM-") and p["category"] == "Promotional Materials"
+    # The category filter finds it, and only it.
+    got = admin.get("/api/v1/inventory/items?category=Promotional%20Materials").json()["items"]
+    assert [i["id"] for i in got] == [p["id"]]

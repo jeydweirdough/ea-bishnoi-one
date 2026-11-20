@@ -382,7 +382,7 @@ INVENTORY = Dataset(
         F("item_code", "Item Code", required=True, synonyms=["sku", "code", "item no"], example="TNR-85A"),
         F("company_code", "Company", synonyms=["company"], example="GPI"),
         F("item_name", "Item Name", required=True, synonyms=["name", "item", "description"], example="HP 85A toner"),
-        F("category", "Category", "choice", choices=["Equipment", "Supplies", "Spare Parts", "Consumables"], example="Supplies"),
+        F("category", "Category", "choice", choices=["Equipment", "Supplies", "Spare Parts", "Consumables", "Promotional Materials"], example="Supplies"),
         F("brand", "Brand", example="HP"),
         F("model", "Model", example="CE285A"),
         F("unit", "Unit", example="pc"),

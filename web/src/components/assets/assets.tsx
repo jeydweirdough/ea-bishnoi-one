@@ -119,13 +119,14 @@ const STATUS: Record<AssetStatus, { label: string; icon: LucideIcon }> = {
   retired: { label: "Retired", icon: Archive },
 };
 
-export function AssetStatusBadge({ a }: { a: Pick<Asset, "status" | "awaiting_acknowledgement"> }) {
+/** `by` names who has to acknowledge, on pages where the holder isn't shown next to the badge ("you" for the holder). */
+export function AssetStatusBadge({ a, by }: { a: Pick<Asset, "status" | "awaiting_acknowledgement">; by?: string }) {
   const s = STATUS[a.status];
   if (a.status === "assigned" && a.awaiting_acknowledgement)
     return (
-      <span className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-ink bg-sheet pl-2 pr-2.5 text-[12.5px] font-medium whitespace-nowrap">
-        <span className="size-2.5 rounded-full border-2 border-accent" aria-hidden="true" />
-        Awaiting acknowledgement
+      <span className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-full border border-ink bg-sheet pl-2 pr-2.5 text-[12.5px] font-medium">
+        <span className="size-2.5 shrink-0 rounded-full border-2 border-accent" aria-hidden="true" />
+        <span className="truncate">{by === "you" ? "Awaiting your acknowledgement" : by ? `Awaiting acknowledgement by ${by}` : "Awaiting acknowledgement"}</span>
       </span>
     );
   return (
@@ -948,7 +949,7 @@ export function AssetDetailView({ id }: { id: number }) {
           </p>
           <h1 className="mt-1 text-[24px] font-bold leading-tight tracking-[-0.02em] sm:text-[30px]">{a.name}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <AssetStatusBadge a={a} />
+            <AssetStatusBadge a={a} by={has("acknowledge") ? "you" : a.holder?.name} />
             <span className="text-[13px] text-ink-2">{conditionLabel(a.condition)}</span>
           </div>
         </div>
@@ -963,7 +964,7 @@ export function AssetDetailView({ id }: { id: number }) {
               : a.holder
                 ? a.acknowledged_at
                   ? `Acknowledged ${fmtDate(a.acknowledged_at)}.`
-                  : `Issued ${fmtDate(a.date_issued)} · Receipt not yet acknowledged.`
+                  : `Issued ${fmtDate(a.date_issued)} · Waiting for ${a.holder.name} to acknowledge receipt.`
                 : a.location
                   ? `At ${a.location}.`
                   : "Not issued to anyone."}

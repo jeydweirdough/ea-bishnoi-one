@@ -27,6 +27,8 @@ export type FieldDef = {
   allowAdd?: boolean;
   /** Only shown (and sent) when this returns true for the current values. */
   show?: (v: Values) => boolean;
+  /** Text fields: common answers as one-tap chips under the box, so most people never type it. */
+  suggest?: string[];
 };
 
 const visible = (f: FieldDef, v: Values) => !f.show || f.show(v);
@@ -110,6 +112,28 @@ function Control({ f, value, onChange, invalid, draft }: { f: FieldDef; value: s
     case "date":
       return <Input id={id} type="date" min={f.min} value={value} onChange={(e) => onChange(e.target.value)} invalid={invalid} />;
     default:
+      if (f.suggest?.length)
+        return (
+          <div className="flex flex-col gap-2">
+            <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} invalid={invalid} placeholder={f.placeholder} />
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label={`Common ${f.label.toLowerCase()}`}>
+              {f.suggest.slice(0, 6).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={value === s}
+                  onClick={() => onChange(s)}
+                  className={cn(
+                    "h-8 rounded-full border px-3 text-[13px] font-medium transition-colors duration-150",
+                    value === s ? "border-ink bg-ink text-white" : "border-line bg-sheet text-ink-2 hover:border-edge hover:text-ink",
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
       return <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} invalid={invalid} placeholder={f.placeholder} />;
   }
 }

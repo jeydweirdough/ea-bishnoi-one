@@ -102,9 +102,10 @@ export function RouteProgress({ r }: { r: RequestSummary }) {
   if (!r.steps_total) return null;
   return (
     <span className="mt-2 flex items-center gap-2" aria-label={`${r.steps_done} of ${r.steps_total} approvals`}>
-      <span className="flex gap-1" aria-hidden="true">
+      {/* One joined line, not loose pills: the stages read as one route. */}
+      <span className="flex h-1.5 overflow-hidden rounded-full bg-line" style={{ width: r.steps_total * 22 }} aria-hidden="true">
         {Array.from({ length: r.steps_total }, (_, i) => (
-          <span key={i} className={cn("h-1.5 w-5 rounded-full", i < r.steps_done ? "bg-ink" : i === r.steps_done && r.current_step ? "bg-accent" : "bg-line")} />
+          <span key={i} className={cn("h-full flex-1 border-r-2 border-sheet last:border-r-0", i < r.steps_done ? "bg-ink" : i === r.steps_done && r.current_step ? "bg-accent" : "bg-line")} />
         ))}
       </span>
       <span className="tabular text-[12px] text-ink-3">
