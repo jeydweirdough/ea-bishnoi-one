@@ -18,6 +18,8 @@ const nextConfig: NextConfig = {
   // Production image: a self-contained server (Dockerfile copies .next/standalone).
   output: "standalone",
   poweredByHeader: false,
+  // Each build gets its own id so open tabs can tell a newer deploy is live (see components/service-worker.tsx).
+  env: { NEXT_PUBLIC_BUILD_ID: process.env.SOURCE_COMMIT || String(Date.now()) },
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },

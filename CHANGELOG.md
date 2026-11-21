@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.3 · 2026-11-21
+
+- Camera: never hand off to the phone camera silently; open tabs reload onto a new deploy
+
 ## v1.1.2 · 2026-11-21
 
 - In-app camera for every Take photo: item photos, attachments and documents (plain photos; proof photos stay stamped)

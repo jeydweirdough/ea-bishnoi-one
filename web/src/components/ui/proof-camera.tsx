@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, Check, MapPin, MapPinOff, SwitchCamera, X } from "lucide-react";
+import { Camera, CameraOff, Check, MapPin, MapPinOff, RotateCcw, SwitchCamera, X } from "lucide-react";
 
 /**
  * Photo proof for transactions. The in-app camera fills the screen, takes several shots in a row, and
@@ -114,7 +114,15 @@ export async function stampFile(file: File, label: string, fix: Fix): Promise<Fi
 
 export const canUseLiveCamera = () => typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && typeof window !== "undefined" && window.isSecureContext;
 
-/** Full-screen camera. Returns the stamped shots when the person taps Done. */
+/** Why the in-app camera couldn't start, in plain words. */
+function cameraProblem(e: unknown): string {
+  const name = (e as { name?: string })?.name;
+  if (name === "NotAllowedError" || name === "SecurityError") return "Camera access is blocked for this site. Allow the camera in your browser's site settings (the icon next to the address), then tap Try again.";
+  if (name === "NotFoundError" || name === "OverconstrainedError") return "No camera was found on this device.";
+  if (name === "NotReadableError" || name === "AbortError") return "Another app is using the camera. Close it, then tap Try again.";
+  return "The camera couldn't start. Tap Try again.";
+}
+
 /**
  * The full-screen camera. With a `label` (photo proof) each shot is stamped with date, time and location;
  * without one (item photos, documents) it takes plain photos and doesn't ask for the location.
@@ -127,6 +135,8 @@ export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label
   const [flash, setFlash] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [ready, setReady] = useState(false);
+  const [problem, setProblem] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
   const { fix, state } = useLocation(Boolean(label));
   const fallback = useRef(onFallback);
   useEffect(() => {
@@ -150,14 +160,15 @@ export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label
           void video.current.play().then(() => setReady(true));
         }
       })
-      .catch(() => !off && fallback.current());
+      // Stay in the app and say what's wrong; the phone's camera app is only used if the person asks for it.
+      .catch((e) => !off && setProblem(cameraProblem(e)));
     return () => {
       off = true;
       stream.current?.getTracks().forEach((t) => t.stop());
       stream.current = null;
       setReady(false);
     };
-  }, [facing]);
+  }, [facing, attempt]);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -210,7 +221,28 @@ export function ProofCamera({ label, max, onDone, onClose, onFallback }: { label
           </p>
         </div>
         )}
-        {!ready && <p className="absolute inset-0 flex items-center justify-center text-[14px] text-white/70">Opening the camera…</p>}
+        {!ready && !problem && <p className="absolute inset-0 flex items-center justify-center text-[14px] text-white/70">Opening the camera…</p>}
+        {problem && (
+          <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
+            <CameraOff className="size-8 text-white/80" strokeWidth={1.6} aria-hidden="true" />
+            <p className="max-w-[30ch] text-[14.5px] leading-snug">{problem}</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setProblem(undefined);
+                  setAttempt((n) => n + 1);
+                }}
+                className="inline-flex h-11 items-center gap-1.5 rounded-full bg-white px-5 text-[14px] font-bold text-black"
+              >
+                <RotateCcw className="size-4" strokeWidth={2.25} aria-hidden="true" /> Try again
+              </button>
+              <button type="button" onClick={() => fallback.current()} className="inline-flex h-11 items-center rounded-full border border-white/40 px-5 text-[14px] font-medium">
+                Use phone camera
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-3 pb-[max(env(safe-area-inset-bottom),16px)]">
         <ul className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto" aria-label="Photos taken">
